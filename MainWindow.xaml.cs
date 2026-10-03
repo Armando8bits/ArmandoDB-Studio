@@ -60,6 +60,10 @@ public partial class MainWindow : Window
         SetExplorerVisible(AppSettings.Current.ShowExplorer);
 
         UpdateThemeMenu();
+        MakeCopyable(RowsText, () => Current?.RowCount is { } rows ? ("Número de filas", rows.ToString()) : null);
+        SnippetsEnabledItem.IsChecked = AppSettings.Current.SnippetsEnabled;
+        ConfirmDangerousItem.IsChecked = AppSettings.Current.ConfirmDangerous;
+        ConfirmProductionItem.IsChecked = AppSettings.Current.ConfirmProductionWrites;
         Theme.Changed += Theme_Changed;
         Closed += (_, _) => Theme.Changed -= Theme_Changed;
     }
@@ -147,6 +151,17 @@ public partial class MainWindow : Window
             e.Handled = true;
             ToggleExplorer_Click(sender, e);
         }
+        else if (modifiers == ModifierKeys.Control && e.Key == Key.F)
+        {
+            // Aunque el foco esté en la cuadrícula o en Mensajes, se busca en el editor SQL.
+            e.Handled = true;
+            Current?.OpenSearch();
+        }
+        else if (modifiers == ModifierKeys.Control && e.Key == Key.H)
+        {
+            e.Handled = true;
+            OpenReplace();
+        }
         else if (modifiers == ModifierKeys.Control && e.Key == Key.O)
         {
             e.Handled = true;
@@ -195,6 +210,43 @@ public partial class MainWindow : Window
     {
         if (Current != null) await Current.ExplainAsync();
     }
+    private void Find_Click(object sender, RoutedEventArgs e) => Current?.OpenSearch();
+    private void Replace_Click(object sender, RoutedEventArgs e) => OpenReplace();
+
+    private ReplaceDialog? _replaceDialog;
+
+    /// <summary>Ventana de reemplazar, única y no modal; siempre actúa sobre la pestaña activa.</summary>
+    private void OpenReplace()
+    {
+        if (_replaceDialog == null)
+        {
+            _replaceDialog = new ReplaceDialog(this, () => Current?.SqlEditor);
+            _replaceDialog.Closed += (_, _) => _replaceDialog = null;
+            _replaceDialog.Show();
+        }
+        _replaceDialog.Prefill(Current?.SqlEditor.SelectedText);
+        _replaceDialog.Activate();
+    }
+
+    private void SnippetsEnabled_Click(object sender, RoutedEventArgs e)
+    {
+        AppSettings.Current.SnippetsEnabled = SnippetsEnabledItem.IsChecked;
+        try { AppSettings.Current.Save(); } catch { }
+    }
+
+    private void ConfirmSettings_Click(object sender, RoutedEventArgs e)
+    {
+        AppSettings.Current.ConfirmDangerous = ConfirmDangerousItem.IsChecked;
+        AppSettings.Current.ConfirmProductionWrites = ConfirmProductionItem.IsChecked;
+        try { AppSettings.Current.Save(); } catch { }
+    }
+
+    private void Snippets_Click(object sender, RoutedEventArgs e) =>
+        MessageBox.Show(this,
+            "Escribe la abreviatura en el editor y pulsa Tab:\n\n" + Snippets.Describe()
+                + (AppSettings.Current.SnippetsEnabled ? "" : "\n\nAhora están desactivados: actívalos en el menú Editar."),
+            "Fragmentos de código", MessageBoxButton.OK, MessageBoxImage.Information);
+
     private void TogglePin_Click(object sender, RoutedEventArgs e) { if (ActiveEntry != null) TogglePin(ActiveEntry); }
     private void NextTab_Click(object sender, RoutedEventArgs e) => SelectRelative(1);
     private void PreviousTab_Click(object sender, RoutedEventArgs e) => SelectRelative(-1);
@@ -244,9 +296,30 @@ public partial class MainWindow : Window
         else
         {
             profile.Password = dialog.Profile.Password;
+            // Si se marcó o desmarcó como producción, se refleja en lo ya abierto.
+            if (profile.IsProduction != dialog.Profile.IsProduction)
+            {
+                profile.IsProduction = dialog.Profile.IsProduction;
+                var root = Explorer.Items.Cast<TreeViewItem>().FirstOrDefault(i => (i.Tag as Node)?.Profile == profile);
+                if (root != null) root.Header = ServerHeader(profile);
+                foreach (var entry in _tabs) StyleHeader(entry);
+            }
         }
 
         AddTab(profile, dialog.Profile.Database);
+    }
+
+    /// <summary>Encabezado del nodo de una conexión; las de producción, en rojo y rotuladas.</summary>
+    private static StackPanel ServerHeader(ConnectionProfile profile)
+    {
+        if (!profile.IsProduction)
+            return ExplorerIcons.Header(ExplorerIcon.Server, profile.Name);
+
+        var header = ExplorerIcons.Header(ExplorerIcon.Server, $"{profile.Name}  ·  PRODUCCIÓN");
+        var text = (TextBlock)header.Children[1];
+        text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.ProdText");
+        text.FontWeight = FontWeights.SemiBold;
+        return header;
     }
 
     private void Disconnect_Click(object sender, RoutedEventArgs e)
@@ -792,17 +865,18 @@ public partial class MainWindow : Window
     {
         bool selected = entry == entry.Group.Selected;
         if (selected)
-        {
             entry.Header.SetResourceReference(Border.BackgroundProperty, "Brush.TabSelected");
-            // Azul en el grupo activo; gris en la pestaña visible del otro grupo.
+        else
+            entry.Header.Background = Brushes.Transparent;
+
+        // Línea superior: roja siempre en producción; si no, azul en el grupo activo y gris en el otro grupo.
+        if (entry.Tab.Profile.IsProduction)
+            entry.Header.SetResourceReference(Border.BorderBrushProperty, "Brush.ProdAccent");
+        else if (selected)
             entry.Header.SetResourceReference(Border.BorderBrushProperty,
                 entry.Group == _activeGroup ? "Brush.TabAccent" : "Brush.TabInactiveAccent");
-        }
         else
-        {
-            entry.Header.Background = Brushes.Transparent;
             entry.Header.BorderBrush = Brushes.Transparent;
-        }
         entry.Title.FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
         entry.PinButton.Opacity = entry.Pinned ? 1 : 0.35;
         entry.PinButton.ToolTip = entry.Pinned ? "Desanclar pestaña" : "Anclar pestaña";
@@ -887,10 +961,60 @@ public partial class MainWindow : Window
         DisconnectButton.IsEnabled = _databases.Count > 0;
 
         StatusText.Text = tab?.StatusText ?? (_databases.Count > 0 ? "Listo" : "Sin conexión");
-        ConnectionText.Text = tab != null ? $"{tab.Profile.Name}  |  {tab.CurrentDatabase ?? "(sin base)"}" : "";
+        bool production = tab?.Profile.IsProduction == true;
+        ConnectionText.Text = tab != null
+            ? $"{(production ? "PRODUCCIÓN  ·  " : "")}{tab.Profile.Name}  |  {tab.CurrentDatabase ?? "(sin base)"}"
+            : "";
+        StatusBarControl.SetResourceReference(BackgroundProperty, production ? "Brush.ProdStatusBar" : "Brush.StatusBar");
+        StatusBarControl.SetResourceReference(ForegroundProperty, production ? "Brush.ProdStatusBarText" : "Brush.StatusBarText");
+        ShowSelectionStats(tab?.SelectionStats ?? Array.Empty<SelectionStat>());
         TimeText.Text = tab?.TimeText ?? "";
         RowsText.Text = tab?.RowsText ?? "";
+        RowsText.ToolTip = tab?.RowCount is { } rows ? $"Clic para copiar {rows}" : null;
         Title = tab != null ? $"{tab.Title} - {tab.Profile.Name} - {App.Name}" : App.Name;
+    }
+
+    private IReadOnlyList<SelectionStat>? _shownStats;
+
+    /// <summary>Cada valor (Recuento, Suma...) es pulsable: copia su número al portapapeles, como en Excel.</summary>
+    private void ShowSelectionStats(IReadOnlyList<SelectionStat> stats)
+    {
+        if (ReferenceEquals(stats, _shownStats)) return;
+        _shownStats = stats;
+        SelectionStatsPanel.Children.Clear();
+        foreach (var stat in stats)
+        {
+            var text = new TextBlock
+            {
+                Text = $"{stat.Label}: {stat.Display}",
+                Margin = new Thickness(6, 0, 6, 0),
+                ToolTip = $"Clic para copiar {stat.CopyText}",
+            };
+            MakeCopyable(text, () => (stat.Label, stat.CopyText));
+            SelectionStatsPanel.Children.Add(text);
+        }
+    }
+
+    /// <summary>Texto de la barra de estado que, al pulsarlo, copia un valor al portapapeles.</summary>
+    private void MakeCopyable(TextBlock text, Func<(string Label, string Value)?> value)
+    {
+        text.Cursor = Cursors.Hand;
+        text.MouseEnter += (_, _) => text.TextDecorations = TextDecorations.Underline;
+        text.MouseLeave += (_, _) => text.TextDecorations = null;
+        text.MouseLeftButtonUp += (_, _) =>
+        {
+            if (value() is not var (label, copy)) return;
+            try
+            {
+                Clipboard.SetText(copy);
+                StatusText.Text = $"{label} copiado al portapapeles: {copy}";
+            }
+            catch (Exception ex)
+            {
+                // El portapapeles puede estar bloqueado por otra aplicación.
+                StatusText.Text = "No se pudo copiar: " + ex.Message;
+            }
+        };
     }
 
     // ---------- Archivos ----------
@@ -956,7 +1080,11 @@ public partial class MainWindow : Window
             NodeKind.View => ExplorerIcon.View,
             _ => ExplorerIcon.Table,
         };
-        var item = new TreeViewItem { Header = ExplorerIcons.Header(icon, header), Tag = node };
+        var item = new TreeViewItem
+        {
+            Header = node.Kind == NodeKind.Server ? ServerHeader(node.Profile) : ExplorerIcons.Header(icon, header),
+            Tag = node,
+        };
         if (expandable)
             item.Items.Add(new TreeViewItem { Header = "Cargando...", Tag = Placeholder });
         item.ContextMenu = BuildMenu(item, node);
@@ -1057,12 +1185,33 @@ public partial class MainWindow : Window
             item.Items.Clear();
             foreach (var child in children)
                 item.Items.Add(child);
+            ApplyExplorerFilter();
         }
         catch (Exception ex)
         {
             placeholder.Header = "Error: " + ex.Message;
             placeholder.Tag = Placeholder;
         }
+    }
+
+    private void ExplorerFilter_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        ExplorerFilterHint.Visibility = ExplorerFilter.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ApplyExplorerFilter();
+    }
+
+    /// <summary>Oculta las tablas y vistas que no contienen el texto del filtro (en las bases ya cargadas).</summary>
+    private void ApplyExplorerFilter()
+    {
+        string filter = ExplorerFilter.Text.Trim();
+        foreach (var server in Explorer.Items.OfType<TreeViewItem>())
+            foreach (var database in server.Items.OfType<TreeViewItem>())
+                foreach (var table in database.Items.OfType<TreeViewItem>())
+                {
+                    if (table.Tag is not Node { Kind: NodeKind.Table or NodeKind.View, Name: { } name }) continue;
+                    bool visible = filter.Length == 0 || name.Contains(filter, StringComparison.OrdinalIgnoreCase);
+                    table.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+                }
     }
 
     private async Task ScriptCreateAsync(Node node, string fullName)

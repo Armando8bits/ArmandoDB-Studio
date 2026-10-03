@@ -1,7 +1,7 @@
 <Window x:Class="MySmdb.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ArmandoDB Studio" Icon="pack://application:,,,/app.ico" Width="1280" Height="800" WindowStartupLocation="CenterScreen" WindowState="Maximized"
+        Title="ArmandoDB Studio" Icon="pack://application:,,,/ArmandoDBStudio;component/app.ico" Width="1280" Height="800" WindowStartupLocation="CenterScreen" WindowState="Maximized"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown">
     <DockPanel>
         <Menu DockPanel.Dock="Top">
@@ -16,6 +16,14 @@
                 <MenuItem Header="C_errar pestaña" InputGestureText="Ctrl+W" Click="CloseTab_Click"/>
                 <Separator/>
                 <MenuItem Header="_Salir" Click="Exit_Click"/>
+            </MenuItem>
+            <MenuItem Header="_Editar">
+                <MenuItem Header="_Buscar..." InputGestureText="Ctrl+F" Click="Find_Click"/>
+                <MenuItem Header="_Reemplazar..." InputGestureText="Ctrl+H" Click="Replace_Click"/>
+                <Separator/>
+                <MenuItem x:Name="SnippetsEnabledItem" Header="Fragmentos de código _activados (abreviatura + Tab)"
+                          IsCheckable="True" Click="SnippetsEnabled_Click"/>
+                <MenuItem Header="_Fragmentos de código..." Click="Snippets_Click"/>
             </MenuItem>
             <MenuItem Header="_Consulta">
                 <MenuItem Header="_Ejecutar" InputGestureText="Ctrl+E / F5" Click="Execute_Click"/>
@@ -36,6 +44,12 @@
             </MenuItem>
             <MenuItem Header="_Herramientas">
                 <MenuItem Header="_Fuente y tamaño..." Click="Font_Click"/>
+                <MenuItem Header="_Confirmaciones antes de ejecutar">
+                    <MenuItem x:Name="ConfirmDangerousItem" Header="_Sentencias peligrosas (UPDATE/DELETE sin WHERE, DROP, TRUNCATE)"
+                              IsCheckable="True" Click="ConfirmSettings_Click"/>
+                    <MenuItem x:Name="ConfirmProductionItem" Header="Cualquier _modificación en conexiones de producción"
+                              IsCheckable="True" Click="ConfirmSettings_Click"/>
+                </MenuItem>
                 <MenuItem Header="_Tema">
                     <MenuItem x:Name="ThemeSystemItem" Header="Según _Windows" IsCheckable="True" Click="Theme_Click" Tag="System"/>
                     <MenuItem x:Name="ThemeLightItem" Header="_Claro" IsCheckable="True" Click="Theme_Click" Tag="Light"/>
@@ -84,7 +98,7 @@
         </ToolBarTray>
 
         <!-- Compacta, como antes del tema Fluent (que le da mucho más relleno). -->
-        <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource Brush.StatusBar}" Foreground="{DynamicResource Brush.StatusBarText}"
+        <StatusBar DockPanel.Dock="Bottom" x:Name="StatusBarControl" Background="{DynamicResource Brush.StatusBar}" Foreground="{DynamicResource Brush.StatusBarText}"
                    Padding="0" MinHeight="0">
             <StatusBar.Resources>
                 <Style TargetType="StatusBarItem" BasedOn="{StaticResource {x:Type StatusBarItem}}">
@@ -97,6 +111,8 @@
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">
                 <StackPanel Orientation="Horizontal">
+                    <!-- Suma, Promedio...: clic para copiar el valor, como en Excel -->
+                    <StackPanel x:Name="SelectionStatsPanel" Orientation="Horizontal" Margin="6,0"/>
                     <TextBlock x:Name="ConnectionText" Margin="12,0"/>
                     <TextBlock x:Name="TimeText" Margin="12,0"/>
                     <TextBlock x:Name="RowsText" Margin="12,0"/>
@@ -118,6 +134,13 @@
                             ToolTip="Ocultar el explorador de objetos (Ctrl+B)"/>
                     <TextBlock Text="Explorador de objetos" Padding="6,3" Foreground="White" VerticalAlignment="Center"/>
                 </DockPanel>
+                <!-- Filtro de tablas y vistas (de las bases ya expandidas) -->
+                <Grid DockPanel.Dock="Top" Margin="4">
+                    <TextBox x:Name="ExplorerFilter" TextChanged="ExplorerFilter_TextChanged"
+                             ToolTip="Filtra las tablas y vistas de las bases de datos expandidas"/>
+                    <TextBlock x:Name="ExplorerFilterHint" Text="Filtrar tablas..." Margin="11,0,0,0" VerticalAlignment="Center"
+                               IsHitTestVisible="False" Foreground="{DynamicResource Brush.SecondaryText}"/>
+                </Grid>
                 <TreeView x:Name="Explorer" BorderThickness="0" TreeViewItem.Expanded="Explorer_Expanded"/>
             </DockPanel>
 

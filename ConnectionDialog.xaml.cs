@@ -97,6 +97,7 @@ public partial class ConnectionDialog : Window
         PasswordBox.Password = p.Password;
         DatabaseBox.Text = p.Kind == DbKind.Sqlite ? "" : p.Database ?? "";
         RememberCheck.IsChecked = saved == null || p.ProtectedPassword != null;
+        ProductionCheck.IsChecked = p.IsProduction;
         UpdateTypePanels();
     }
 
@@ -167,7 +168,10 @@ public partial class ConnectionDialog : Window
             {
                 return Invalid("La ruta del archivo no es válida.", FileBox);
             }
-            return new ConnectionProfile { Kind = DbKind.Sqlite, Alias = alias, FilePath = file, Database = "main" };
+            return new ConnectionProfile
+            {
+                Kind = DbKind.Sqlite, Alias = alias, FilePath = file, Database = "main", IsProduction = ProductionCheck.IsChecked == true,
+            };
         }
 
         if (string.IsNullOrWhiteSpace(HostBox.Text))
@@ -180,6 +184,7 @@ public partial class ConnectionDialog : Window
         return new ConnectionProfile
         {
             Alias = alias,
+            IsProduction = ProductionCheck.IsChecked == true,
             Host = HostBox.Text.Trim(),
             Port = port,
             User = UserBox.Text.Trim(),

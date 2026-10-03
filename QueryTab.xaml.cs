@@ -1,6 +1,8 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -12,9 +14,13 @@ using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Editing;
 using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Search;
 using System.Data.Common;
 
 namespace MySmdb;
+
+/// <summary>Un valor de la barra de estado (Suma, Promedio...): cómo se muestra y qué se copia al pulsarlo.</summary>
+public record SelectionStat(string Label, string Display, string CopyText);
 
 public class ResultSet
 {
@@ -45,6 +51,8 @@ public partial class QueryTab : UserControl
     public bool IsRunning { get; private set; }
     public string StatusText { get; private set; } = "Listo";
     public string RowsText { get; private set; } = "";
+    /// <summary>Filas obtenidas en la última ejecución (para copiarlas desde la barra de estado); null si no hay.</summary>
+    public int? RowCount { get; private set; }
     public string TimeText { get; private set; } = "";
 
     public string Title => FilePath != null ? Path.GetFileName(FilePath) : _defaultTitle;
@@ -106,6 +114,21 @@ public partial class QueryTab : UserControl
         }
         ApplyFont();
         ApplyTheme();
+
+        // Ctrl+F, F3 y Mayús+F3: panel de búsqueda del editor, en español.
+        _search = SearchPanel.Install(Editor);
+        _search.Localization = new SpanishSearchLocalization();
+        _search.Template = (ControlTemplate)FindResource("SearchPanelTemplate");
+        SuppressSearchPopup(_search);
+        _search.SearchOptionsChanged += (_, _) => UpdateMatchInfo();
+        _search.Loaded += (_, _) => Dispatcher.BeginInvoke(UpdateMatchInfo, System.Windows.Threading.DispatcherPriority.Background);
+        Editor.TextArea.SelectionChanged += (_, _) => UpdateMatchInfo();
+        // Abreviatura + Tab: fragmento de código.
+        Editor.TextArea.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Tab && Keyboard.Modifiers == ModifierKeys.None && AppSettings.Current.SnippetsEnabled && TryExpandSnippet())
+                e.Handled = true;
+        };
         Editor.TextChanged += (_, _) =>
         {
             if (IsDirty) return;
@@ -115,6 +138,103 @@ public partial class QueryTab : UserControl
     }
 
     public void FocusEditor() => Editor.Focus();
+
+    /// <summary>Editor SQL de la pestaña (para buscar y reemplazar).</summary>
+    public TextEditor SqlEditor => Editor;
+
+    /// <summary>Recuento, suma, promedio... de las celdas seleccionadas en la cuadrícula; vacío si no aplica.</summary>
+    public IReadOnlyList<SelectionStat> SelectionStats { get; private set; } = Array.Empty<SelectionStat>();
+
+    private readonly SearchPanel _search;
+
+    /// <summary>
+    /// AvalonEdit avisa de "sin coincidencias" con un globo emergente que tapa las opciones del panel.
+    /// Se anula; en su lugar, el panel muestra el conteo en una línea de texto (UpdateMatchInfo).
+    /// </summary>
+    private static void SuppressSearchPopup(SearchPanel panel)
+    {
+        if (typeof(SearchPanel).GetField("messageView", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(panel) is ToolTip popup)
+            popup.Opened += (_, _) => popup.IsOpen = false;
+    }
+
+    /// <summary>"Mostrando N de X coincidencias", "X coincidencias" o "Se encontraron 0 resultados".</summary>
+    private void UpdateMatchInfo()
+    {
+        if (_search.IsClosed || _search.Template?.FindName("MatchInfo", _search) is not TextBlock info) return;
+
+        string pattern = _search.SearchPattern ?? "";
+        if (pattern.Length == 0)
+        {
+            info.Text = "";
+            return;
+        }
+
+        Regex regex;
+        try
+        {
+            // Mismas reglas que el panel: texto literal salvo "Regex"; "Palabra" exige límites de palabra.
+            string expression = _search.UseRegex ? pattern : Regex.Escape(pattern);
+            if (_search.WholeWords) expression = $@"\b{expression}\b";
+            regex = new Regex(expression, (_search.MatchCase ? RegexOptions.None : RegexOptions.IgnoreCase) | RegexOptions.Multiline);
+        }
+        catch (ArgumentException)
+        {
+            SetMatchInfo(info, "Expresión regular no válida", error: true);
+            return;
+        }
+
+        var matches = regex.Matches(Editor.Text).Where(m => m.Length > 0).ToList();
+        if (matches.Count == 0)
+        {
+            SetMatchInfo(info, "Se encontraron 0 resultados", error: true);
+            return;
+        }
+
+        int current = matches.FindIndex(m => m.Index == Editor.SelectionStart && m.Length == Editor.SelectionLength) + 1;
+        string total = matches.Count == 1 ? "1 coincidencia" : $"{matches.Count:N0} coincidencias";
+        SetMatchInfo(info, current > 0 ? $"Mostrando {current:N0} de {total}" : total, error: false);
+    }
+
+    private static void SetMatchInfo(TextBlock info, string text, bool error)
+    {
+        info.Text = text;
+        info.SetResourceReference(TextBlock.ForegroundProperty, error ? "Brush.ErrorText" : "Brush.SecondaryText");
+    }
+
+    /// <summary>Abre el panel de búsqueda (lo mismo que Ctrl+F dentro del editor).</summary>
+    public void OpenSearch()
+    {
+        Editor.Focus();
+        ApplicationCommands.Find.Execute(null, Editor.TextArea);
+    }
+
+    /// <summary>Si justo antes del cursor hay una abreviatura conocida, la sustituye por su fragmento.</summary>
+    private bool TryExpandSnippet()
+    {
+        if (Editor.SelectionLength > 0) return false;
+        var document = Editor.Document;
+        int caret = Editor.CaretOffset;
+        int start = caret;
+        while (start > 0 && char.IsLetter(document.GetCharAt(start - 1))) start--;
+        if (start == caret) return false;
+        // Debe ser una palabra suelta: "xsel" o "t_sel" no cuentan.
+        if (start > 0 && (char.IsLetterOrDigit(document.GetCharAt(start - 1)) || document.GetCharAt(start - 1) == '_')) return false;
+
+        string? template = Snippets.Get(document.GetText(start, caret - start), Profile.Kind);
+        if (template == null) return false;
+
+        // Las líneas del fragmento heredan la sangría de la línea actual.
+        var line = document.GetLineByOffset(start);
+        string lineText = document.GetText(line);
+        string indent = lineText[..(lineText.Length - lineText.TrimStart().Length)];
+        string text = template.Replace("\n", "\n" + indent);
+        int cursor = text.IndexOf('|');
+        text = text.Remove(cursor, 1);
+
+        document.Replace(start, caret - start, text);
+        Editor.CaretOffset = start + cursor;
+        return true;
+    }
 
     /// <summary>Aplica la fuente configurada al editor, a la vista de texto y a las cuadrículas.</summary>
     public void ApplyFont()
@@ -193,6 +313,21 @@ public partial class QueryTab : UserControl
 
     private const int GridTab = 0, MessagesTab = 1, PlanTab = 2;
 
+    /// <summary>Pregunta antes de ejecutar sentencias peligrosas. "No" es la opción por defecto.</summary>
+    private bool ConfirmDangerous(List<string> warnings)
+    {
+        const int MaxListed = 10;
+        string list = string.Join("\n", warnings.Take(MaxListed))
+            + (warnings.Count > MaxListed ? $"\n... y {warnings.Count - MaxListed} más." : "");
+        string where = Profile.IsProduction ? $"en PRODUCCIÓN ({Profile.Name})" : $"en {Profile.Name}";
+        string title = Profile.IsProduction ? "Confirmar ejecución en PRODUCCIÓN" : "Confirmar sentencias peligrosas";
+
+        var answer = MessageBox.Show(Window.GetWindow(this),
+            $"Vas a ejecutar {where}:\n\n{list}\n\n¿Continuar?",
+            title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        return answer == MessageBoxResult.Yes;
+    }
+
     /// <summary>
     /// Sentencias de la selección si la hay; si no, de todo el contenido. Devuelve null (y lo explica en
     /// la pestaña indicada) cuando no hay nada que ejecutar.
@@ -220,11 +355,22 @@ public partial class QueryTab : UserControl
         if (IsRunning || ScriptToRun(Messages, MessagesTab) is not { } script) return;
         var (statements, lineOffset) = script;
 
+        var settings = AppSettings.Current;
+        var warnings = SqlSafety.Review(statements, lineOffset, Profile.IsProduction,
+            settings.ConfirmDangerous, settings.ConfirmProductionWrites);
+        if (warnings.Count > 0 && !ConfirmDangerous(warnings))
+        {
+            StatusText = "Ejecución cancelada.";
+            StateChanged?.Invoke(this);
+            return;
+        }
+
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
         IsRunning = true;
         StatusText = "Ejecutando consulta...";
         RowsText = "";
+        RowCount = null;
         TimeText = "";
         StateChanged?.Invoke(this);
 
@@ -295,7 +441,8 @@ public partial class QueryTab : UserControl
         StatusText = cancelled ? "Consulta cancelada."
             : failed ? "Consulta finalizada con errores."
             : "Consulta ejecutada correctamente.";
-        RowsText = $"{results.Sum(r => r.Rows.Count)} filas";
+        RowCount = results.Sum(r => r.Rows.Count);
+        RowsText = $"{RowCount:N0} filas";
         TimeText = watch.Elapsed.ToString(@"hh\:mm\:ss\.fff");
         StateChanged?.Invoke(this);
     }
@@ -315,6 +462,7 @@ public partial class QueryTab : UserControl
         IsRunning = true;
         StatusText = "Generando el plan de ejecución...";
         RowsText = "";
+        RowCount = null;
         TimeText = "";
         StateChanged?.Invoke(this);
 
@@ -571,6 +719,7 @@ public partial class QueryTab : UserControl
     private void ShowResults(List<ResultSet> results)
     {
         _grids.Clear();
+        SelectionStats = Array.Empty<SelectionStat>();
         if (results.Count == 0)
         {
             ResultsHost.Content = null;
@@ -625,6 +774,8 @@ public partial class QueryTab : UserControl
             CanUserAddRows = false,
             CanUserDeleteRows = false,
             CanUserReorderColumns = true,
+            // Como en SSMS, el clic en el encabezado selecciona la columna; ordenar va en su menú contextual.
+            CanUserSortColumns = false,
             SelectionUnit = DataGridSelectionUnit.CellOrRowHeader,
             ClipboardCopyMode = DataGridClipboardCopyMode.ExcludeHeader,
             EnableRowVirtualization = true,
@@ -657,6 +808,7 @@ public partial class QueryTab : UserControl
         }
 
         grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
+        grid.SelectedCellsChanged += (_, _) => UpdateSelectionStats(grid);
 
         var menu = new ContextMenu();
         menu.Items.Add(MenuItem("Copiar", () => ApplicationCommands.Copy.Execute(null, grid)));
@@ -674,6 +826,58 @@ public partial class QueryTab : UserControl
         grid.ItemsSource = result.Rows;
         return grid;
     }
+
+    /// <summary>Por encima de estas celdas solo se muestra el recuento, para no congelar la interfaz.</summary>
+    private const int MaxStatsCells = 1_000_000;
+
+    /// <summary>Como en Excel: con varias celdas seleccionadas, recuento y, si hay números, suma, promedio, mínimo y máximo.</summary>
+    private void UpdateSelectionStats(DataGrid grid)
+    {
+        var cells = grid.SelectedCells;
+        var stats = new List<SelectionStat>();
+        if (cells.Count > MaxStatsCells)
+        {
+            stats.Add(Count(cells.Count));
+        }
+        else if (cells.Count > 1)
+        {
+            var columnIndex = grid.Columns.Select((column, index) => (column, index)).ToDictionary(c => c.column, c => c.index);
+            int numbers = 0;
+            double sum = 0, min = double.MaxValue, max = double.MinValue;
+            foreach (var cell in cells)
+            {
+                if (cell.Item is not object?[] row || !columnIndex.TryGetValue(cell.Column, out int i) || i >= row.Length) continue;
+                if (row[i] is not (byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal)) continue;
+                double value = Convert.ToDouble(row[i], CultureInfo.InvariantCulture);
+                numbers++;
+                sum += value;
+                min = Math.Min(min, value);
+                max = Math.Max(max, value);
+            }
+            stats.Add(Count(cells.Count));
+            if (numbers > 0)
+            {
+                stats.Add(Number("Suma", sum));
+                stats.Add(Number("Promedio", sum / numbers));
+                stats.Add(Number("Mín", min));
+                stats.Add(Number("Máx", max));
+            }
+        }
+
+        if (stats.SequenceEqual(SelectionStats)) return;
+        SelectionStats = stats;
+        StateChanged?.Invoke(this);
+    }
+
+    private static SelectionStat Count(int count) =>
+        new("Recuento", count.ToString("N0", CultureInfo.CurrentCulture), count.ToString(CultureInfo.CurrentCulture));
+
+    /// <summary>
+    /// Se muestra redondeado y con separador de miles; se copia con toda su precisión, sin separador de miles,
+    /// para que al pegarlo en Excel sea un número. El redondeo a 10 decimales quita el ruido de la suma en coma flotante.
+    /// </summary>
+    private static SelectionStat Number(string label, double value) =>
+        new(label, value.ToString("#,##0.####", CultureInfo.CurrentCulture), Math.Round(value, 10).ToString(CultureInfo.CurrentCulture));
 
     /// <summary>
     /// El tema Fluent da filas altas (unos 32 px) y fija su propio fondo, que anula el sombreado alterno.
@@ -718,7 +922,95 @@ public partial class QueryTab : UserControl
         var columnHeaderStyle = new Style(typeof(DataGridColumnHeader), TryFindResource(typeof(DataGridColumnHeader)) as Style);
         columnHeaderStyle.Setters.Add(new Setter(MinHeightProperty, 0.0));
         columnHeaderStyle.Setters.Add(new Setter(PaddingProperty, new Thickness(6, 3, 6, 3)));
+        columnHeaderStyle.Setters.Add(new EventSetter(ButtonBase.ClickEvent, new RoutedEventHandler((sender, _) =>
+        {
+            if (sender is DataGridColumnHeader { Column: { } column }) SelectColumns(grid, column);
+        })));
+        columnHeaderStyle.Setters.Add(new Setter(ContextMenuProperty, BuildColumnHeaderMenu(grid)));
         grid.ColumnHeaderStyle = columnHeaderStyle;
+    }
+
+    /// <summary>Columna de referencia para Mayús+clic (rango de columnas), por cuadrícula.</summary>
+    private readonly Dictionary<DataGrid, DataGridColumn> _columnAnchor = new();
+
+    /// <summary>Clic: solo esa columna. Ctrl+clic: la añade. Mayús+clic: desde la última columna elegida hasta esta.</summary>
+    private void SelectColumns(DataGrid grid, DataGridColumn column)
+    {
+        var modifiers = Keyboard.Modifiers;
+        int first = column.DisplayIndex, last = column.DisplayIndex;
+        if (modifiers.HasFlag(ModifierKeys.Shift) && _columnAnchor.TryGetValue(grid, out var anchor) && grid.Columns.Contains(anchor))
+        {
+            first = Math.Min(anchor.DisplayIndex, column.DisplayIndex);
+            last = Math.Max(anchor.DisplayIndex, column.DisplayIndex);
+        }
+        else
+        {
+            _columnAnchor[grid] = column;
+        }
+
+        bool add = modifiers.HasFlag(ModifierKeys.Control);
+        SelectColumnRange(grid, first, last - first + 1, add);
+        grid.Focus();
+    }
+
+    /// <summary>
+    /// Selecciona columnas completas. DataGrid no tiene API pública para hacerlo de una vez y añadir celda a celda
+    /// es muy lento con muchas filas, así que se usa la misma vía interna que SelectAllCells (con respaldo si cambia).
+    /// </summary>
+    private static void SelectColumnRange(DataGrid grid, int firstDisplayIndex, int count, bool add)
+    {
+        if (!add) grid.UnselectAllCells();
+        int rows = grid.Items.Count;
+        if (rows == 0) return;
+
+        const BindingFlags Internal = BindingFlags.Instance | BindingFlags.NonPublic;
+        var update = typeof(DataGrid).GetMethod("UpdateSelectedCells", Internal, Type.EmptyTypes);
+        var selected = typeof(DataGrid).GetField("_selectedCells", Internal)?.GetValue(grid);
+        var addRegion = selected?.GetType().GetMethod("AddRegion", Internal, new[] { typeof(int), typeof(int), typeof(int), typeof(int) });
+        if (update != null && addRegion != null)
+        {
+            using ((IDisposable)update.Invoke(grid, null)!)
+                addRegion.Invoke(selected, new object[] { 0, firstDisplayIndex, rows, count });
+            return;
+        }
+
+        var columns = grid.Columns.Where(c => c.DisplayIndex >= firstDisplayIndex && c.DisplayIndex < firstDisplayIndex + count).ToList();
+        foreach (var item in grid.Items)
+            foreach (var column in columns)
+                grid.SelectedCells.Add(new DataGridCellInfo(item, column));
+    }
+
+    /// <summary>Clic derecho en un encabezado: ordenar por esa columna o seleccionarla.</summary>
+    private ContextMenu BuildColumnHeaderMenu(DataGrid grid)
+    {
+        var menu = new ContextMenu();
+        DataGridColumn? Target() => (menu.PlacementTarget as DataGridColumnHeader)?.Column;
+
+        void Add(string text, Action<DataGridColumn> action)
+        {
+            var item = new MenuItem { Header = text };
+            item.Click += (_, _) => { if (Target() is { } column) action(column); };
+            menu.Items.Add(item);
+        }
+
+        Add("Ordenar ascendente", column => SortBy(grid, column, ListSortDirection.Ascending));
+        Add("Ordenar descendente", column => SortBy(grid, column, ListSortDirection.Descending));
+        Add("Quitar el orden", column => SortBy(grid, column, null));
+        menu.Items.Add(new Separator());
+        Add("Seleccionar la columna", column => SelectColumnRange(grid, column.DisplayIndex, 1, add: false));
+        return menu;
+    }
+
+    private static void SortBy(DataGrid grid, DataGridColumn column, ListSortDirection? direction)
+    {
+        var view = CollectionViewSource.GetDefaultView(grid.ItemsSource);
+        view.SortDescriptions.Clear();
+        foreach (var other in grid.Columns) other.SortDirection = null;
+        if (direction is { } dir)
+        {
+            view.SortDescriptions.Add(new SortDescription(column.SortMemberPath, dir));
+            column.SortDirection = dir;
+        }
     }
 
     /// <summary>Guarda un resultado como .csv (comas) o .txt (tabuladores), con encabezados.</summary>
@@ -804,6 +1096,18 @@ public partial class QueryTab : UserControl
         item.Click += (_, _) => action();
         return item;
     }
+}
+
+/// <summary>Textos del panel de búsqueda del editor (Ctrl+F) en español.</summary>
+public class SpanishSearchLocalization : ICSharpCode.AvalonEdit.Search.Localization
+{
+    public override string MatchCaseText => "Coincidir mayúsculas y minúsculas";
+    public override string MatchWholeWordsText => "Palabra completa";
+    public override string UseRegexText => "Expresión regular";
+    public override string FindNextText => "Buscar siguiente (F3)";
+    public override string FindPreviousText => "Buscar anterior (Mayús+F3)";
+    public override string ErrorText => "Error: ";
+    public override string NoMatchesFoundText => "No se encontraron coincidencias";
 }
 
 /// <summary>Pinta en rojo las líneas de error de la vista de texto.</summary>

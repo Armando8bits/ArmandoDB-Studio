@@ -38,6 +38,11 @@ public static class Theme
         ["Brush.OkText"] = ("#1E7B34", "#6CCB7A"),
         ["Brush.PanelBackground"] = ("#F3F5F9", "#252526"),
         ["Brush.PanelBorder"] = ("#D6DBE9", "#3F3F46"),
+        // Conexiones de producción
+        ["Brush.ProdAccent"] = ("#C42B1C", "#E5534B"),
+        ["Brush.ProdText"] = ("#C42B1C", "#FF7B72"),
+        ["Brush.ProdStatusBar"] = ("#C42B1C", "#8E1F17"),
+        ["Brush.ProdStatusBarText"] = ("#FFFFFF", "#FFFFFF"),
     };
 
     // Colores del resaltado SQL (nombres de la definición TSQL de AvalonEdit): (claro, oscuro)

@@ -64,7 +64,22 @@
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Margin="2,4" ToolTip="{Binding Summary}">
-                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right" Text="PROD" FontSize="10" FontWeight="Bold" Margin="6,0,0,0"
+                                                   VerticalAlignment="Center" Foreground="{DynamicResource Brush.ProdText}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsProduction}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    </DockPanel>
                                     <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource Brush.SecondaryText}" FontSize="11" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                             </DataTemplate>
@@ -146,11 +161,15 @@
                     <TextBox Grid.Column="1" x:Name="NameBox"
                              ToolTip="Opcional. Identifica la conexión y su sesión: los archivos abiertos se recuerdan por este nombre."/>
                     <Label Grid.Row="1" Content="Tipo de base:"/>
-                    <ComboBox Grid.Row="1" Grid.Column="1" x:Name="TypeCombo" Margin="0,4" Width="140" HorizontalAlignment="Left"
-                              SelectionChanged="TypeCombo_SelectionChanged">
-                        <ComboBoxItem Content="MySQL"/>
-                        <ComboBoxItem Content="SQLite"/>
-                    </ComboBox>
+                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+                        <ComboBox x:Name="TypeCombo" Margin="0,4" Width="140" SelectionChanged="TypeCombo_SelectionChanged">
+                            <ComboBoxItem Content="MySQL"/>
+                            <ComboBoxItem Content="SQLite"/>
+                        </ComboBox>
+                        <CheckBox x:Name="ProductionCheck" Content="Producción" Margin="20,0,0,0" VerticalAlignment="Center"
+                                  Foreground="{DynamicResource Brush.ProdText}" FontWeight="SemiBold"
+                                  ToolTip="Se resalta en rojo y pide confirmación antes de cualquier sentencia que modifique datos o estructura"/>
+                    </StackPanel>
                 </Grid>
 
                 <Separator Margin="0,8"/>

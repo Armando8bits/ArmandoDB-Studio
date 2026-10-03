@@ -23,6 +23,15 @@ public class AppSettings
     /// <summary>"System" (según Windows), "Light" u "Dark".</summary>
     public string Theme { get; set; } = "System";
 
+    /// <summary>Abreviatura + Tab expande un fragmento de código.</summary>
+    public bool SnippetsEnabled { get; set; } = true;
+
+    /// <summary>Confirmar UPDATE/DELETE sin WHERE, DROP y TRUNCATE en cualquier conexión.</summary>
+    public bool ConfirmDangerous { get; set; } = true;
+
+    /// <summary>En conexiones de producción, confirmar cualquier sentencia que modifique datos o estructura.</summary>
+    public bool ConfirmProductionWrites { get; set; } = true;
+
     public static AppSettings Current { get; } = Load();
 
     private static AppSettings Load()

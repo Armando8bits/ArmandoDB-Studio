@@ -32,6 +32,9 @@ public class ConnectionProfile
     /// <summary>Nombre elegido por el usuario para la conexión guardada (opcional).</summary>
     public string? Alias { get; set; }
 
+    /// <summary>Conexión de producción: se resalta en rojo y pide confirmar cualquier sentencia que modifique.</summary>
+    public bool IsProduction { get; set; }
+
     [JsonIgnore]
     public string DefaultName => Kind == DbKind.Sqlite
         ? $"{Path.GetFileName(FilePath)} ({Path.GetDirectoryName(FilePath)})"
