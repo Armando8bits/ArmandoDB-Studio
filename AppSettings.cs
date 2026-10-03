@@ -20,6 +20,9 @@ public class AppSettings
 
     public bool ShowExplorer { get; set; } = true;
 
+    /// <summary>"System" (según Windows), "Light" u "Dark".</summary>
+    public string Theme { get; set; } = "System";
+
     public static AppSettings Current { get; } = Load();
 
     private static AppSettings Load()
@@ -97,12 +100,13 @@ public class FontSettingsDialog : Window
         var previewBox = new Border
         {
             Child = _preview,
-            BorderBrush = Brushes.Silver,
             BorderThickness = new Thickness(1),
-            Background = Brushes.White,
             Margin = new Thickness(0, 8, 0, 0),
             MinHeight = 60,
         };
+        previewBox.SetResourceReference(Border.BorderBrushProperty, "Brush.PanelBorder");
+        previewBox.SetResourceReference(Border.BackgroundProperty, "Brush.EditorBackground");
+        _preview.SetResourceReference(TextBlock.ForegroundProperty, "Brush.EditorForeground");
         Grid.SetRow(previewBox, 3);
         Grid.SetColumnSpan(previewBox, 2);
         grid.Children.Add(previewBox);

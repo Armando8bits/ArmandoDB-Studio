@@ -10,8 +10,6 @@ namespace MySmdb;
 
 public partial class ConnectionDialog : Window
 {
-    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x1E, 0x7B, 0x34));
-
     public ConnectionProfile? Profile { get; private set; }
 
     public ConnectionDialog()
@@ -133,7 +131,8 @@ public partial class ConnectionDialog : Window
     private void SetStatus(string text, bool? ok)
     {
         StatusLine.Text = text;
-        StatusLine.Foreground = ok switch { true => OkBrush, false => Brushes.Firebrick, _ => Brushes.Gray };
+        StatusLine.SetResourceReference(TextBlock.ForegroundProperty,
+            ok switch { true => "Brush.OkText", false => "Brush.ErrorText", _ => "Brush.SecondaryText" });
     }
 
     private void SetBusy(bool busy)

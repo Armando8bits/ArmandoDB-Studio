@@ -35,6 +35,11 @@
             </MenuItem>
             <MenuItem Header="_Herramientas">
                 <MenuItem Header="_Fuente y tamaño..." Click="Font_Click"/>
+                <MenuItem Header="_Tema">
+                    <MenuItem x:Name="ThemeSystemItem" Header="Según _Windows" IsCheckable="True" Click="Theme_Click" Tag="System"/>
+                    <MenuItem x:Name="ThemeLightItem" Header="_Claro" IsCheckable="True" Click="Theme_Click" Tag="Light"/>
+                    <MenuItem x:Name="ThemeDarkItem" Header="_Oscuro" IsCheckable="True" Click="Theme_Click" Tag="Dark"/>
+                </MenuItem>
             </MenuItem>
         </Menu>
 
@@ -53,7 +58,7 @@
                 <Separator/>
                 <Button x:Name="ExecuteButton" Click="Execute_Click" Padding="6,2" ToolTip="Ejecutar (Ctrl+E o F5): la selección o todo el contenido">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="▶" Foreground="Green" Margin="0,0,4,0"/>
+                        <TextBlock Text="▶" Foreground="#FF2E9E4F" Margin="0,0,4,0"/>
                         <TextBlock Text="Ejecutar"/>
                     </StackPanel>
                 </Button>
@@ -66,7 +71,15 @@
             </ToolBar>
         </ToolBarTray>
 
-        <StatusBar DockPanel.Dock="Bottom" Background="#FFFFF29D">
+        <!-- Compacta, como antes del tema Fluent (que le da mucho más relleno). -->
+        <StatusBar DockPanel.Dock="Bottom" Background="{DynamicResource Brush.StatusBar}" Foreground="{DynamicResource Brush.StatusBarText}"
+                   Padding="0" MinHeight="0">
+            <StatusBar.Resources>
+                <Style TargetType="StatusBarItem" BasedOn="{StaticResource {x:Type StatusBarItem}}">
+                    <Setter Property="Padding" Value="6,2"/>
+                    <Setter Property="MinHeight" Value="0"/>
+                </Style>
+            </StatusBar.Resources>
             <StatusBarItem>
                 <TextBlock x:Name="StatusText" Text="Sin conexión"/>
             </StatusBarItem>
@@ -96,7 +109,7 @@
                 <TreeView x:Name="Explorer" BorderThickness="0" TreeViewItem.Expanded="Explorer_Expanded"/>
             </DockPanel>
 
-            <GridSplitter Grid.Column="1" x:Name="ExplorerSplitter" Width="5" HorizontalAlignment="Stretch" Background="#FFD6DBE9"/>
+            <GridSplitter Grid.Column="1" x:Name="ExplorerSplitter" Width="5" HorizontalAlignment="Stretch" Background="{DynamicResource Brush.Splitter}"/>
 
             <!-- Uno o dos grupos de pestañas (vista dividida); se construyen en código. -->
             <Grid Grid.Column="2" x:Name="GroupsGrid"/>

@@ -39,7 +39,6 @@ public partial class MainWindow : Window
 
     private const string FileFilter = "Archivos SQL (*.sql)|*.sql|Todos los archivos (*.*)|*.*";
     private static readonly object Placeholder = new();
-    private static readonly Brush AccentBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x7A, 0xCC));
 
     private readonly Dictionary<ConnectionProfile, List<string>> _databases = new();
     private readonly List<TabEntry> _tabs = new();
@@ -59,6 +58,37 @@ public partial class MainWindow : Window
         _groups.Add(_activeGroup);
         LayoutGroups();
         SetExplorerVisible(AppSettings.Current.ShowExplorer);
+
+        UpdateThemeMenu();
+        Theme.Changed += Theme_Changed;
+        Closed += (_, _) => Theme.Changed -= Theme_Changed;
+    }
+
+    // ---------- Tema ----------
+
+    private void Theme_Click(object sender, RoutedEventArgs e)
+    {
+        var choice = Theme.Parse((string)((MenuItem)sender).Tag);
+        AppSettings.Current.Theme = choice.ToString();
+        try { AppSettings.Current.Save(); } catch { }
+        Theme.Apply(choice);
+    }
+
+    private void Theme_Changed()
+    {
+        UpdateThemeMenu();
+        foreach (var entry in _tabs)
+        {
+            entry.Tab.ApplyTheme();
+            StyleHeader(entry);
+        }
+    }
+
+    private void UpdateThemeMenu()
+    {
+        ThemeSystemItem.IsChecked = Theme.Choice == ThemeChoice.System;
+        ThemeLightItem.IsChecked = Theme.Choice == ThemeChoice.Light;
+        ThemeDarkItem.IsChecked = Theme.Choice == ThemeChoice.Dark;
     }
 
     private void ToggleExplorer_Click(object sender, RoutedEventArgs e)
@@ -550,18 +580,18 @@ public partial class MainWindow : Window
         var pinnedRow = new Border
         {
             Child = pinnedStrip,
-            Background = new SolidColorBrush(Color.FromRgb(0xDC, 0xE4, 0xF2)),
             Visibility = Visibility.Collapsed,
             AllowDrop = true,
         };
+        pinnedRow.SetResourceReference(Border.BackgroundProperty, "Brush.TabStripPinned");
         var normalRow = new Border
         {
             Child = normalStrip,
-            Background = new SolidColorBrush(Color.FromRgb(0xEE, 0xEE, 0xF2)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xCC, 0xCE, 0xDB)),
             BorderThickness = new Thickness(0, 0, 0, 1),
             AllowDrop = true,
         };
+        normalRow.SetResourceReference(Border.BackgroundProperty, "Brush.TabStrip");
+        normalRow.SetResourceReference(Border.BorderBrushProperty, "Brush.TabStripBorder");
         var host = new Grid();
 
         var root = new DockPanel();
@@ -627,8 +657,8 @@ public partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             ResizeBehavior = GridResizeBehavior.PreviousAndNext,
-            Background = new SolidColorBrush(Color.FromRgb(0xB8, 0xC2, 0xD6)),
         };
+        splitter.SetResourceReference(BackgroundProperty, "Brush.Splitter");
         if (AppSettings.Current.SplitSideBySide)
         {
             GroupsGrid.ColumnDefinitions.Add(new ColumnDefinition { MinWidth = 120 });
@@ -751,9 +781,18 @@ public partial class MainWindow : Window
     private void StyleHeader(TabEntry entry)
     {
         bool selected = entry == entry.Group.Selected;
-        entry.Header.Background = selected ? Brushes.White : Brushes.Transparent;
-        // Azul en el grupo activo; gris en la pestaña visible del otro grupo.
-        entry.Header.BorderBrush = !selected ? Brushes.Transparent : entry.Group == _activeGroup ? AccentBrush : Brushes.DarkGray;
+        if (selected)
+        {
+            entry.Header.SetResourceReference(Border.BackgroundProperty, "Brush.TabSelected");
+            // Azul en el grupo activo; gris en la pestaña visible del otro grupo.
+            entry.Header.SetResourceReference(Border.BorderBrushProperty,
+                entry.Group == _activeGroup ? "Brush.TabAccent" : "Brush.TabInactiveAccent");
+        }
+        else
+        {
+            entry.Header.Background = Brushes.Transparent;
+            entry.Header.BorderBrush = Brushes.Transparent;
+        }
         entry.Title.FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
         entry.PinButton.Opacity = entry.Pinned ? 1 : 0.35;
         entry.PinButton.ToolTip = entry.Pinned ? "Desanclar pestaña" : "Anclar pestaña";
@@ -998,7 +1037,9 @@ public partial class MainWindow : Window
                     {
                         // La descripción de la columna marca la clave primaria con ", PK".
                         var columnIcon = column.Contains(", PK") ? ExplorerIcon.KeyColumn : ExplorerIcon.Column;
-                        children.Add(new TreeViewItem { Header = ExplorerIcons.Header(columnIcon, column), Foreground = Brushes.DimGray });
+                        var columnItem = new TreeViewItem { Header = ExplorerIcons.Header(columnIcon, column) };
+                        columnItem.SetResourceReference(ForegroundProperty, "Brush.SecondaryText");
+                        children.Add(columnItem);
                     }
                     break;
             }

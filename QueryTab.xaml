@@ -19,7 +19,7 @@
                            ShowLineNumbers="True" SyntaxHighlighting="TSQL"
                            HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
 
-        <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="#FFD6DBE9"/>
+        <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="{DynamicResource Brush.Splitter}"/>
 
         <TabControl Grid.Row="2" x:Name="ResultTabs">
             <TabItem Header="Cuadrícula">

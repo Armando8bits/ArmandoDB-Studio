@@ -37,6 +37,13 @@ public partial class App : Application
         }
     }
 
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+        // Antes de que se cree la ventana principal (StartupUri).
+        Theme.Apply(Theme.Parse(AppSettings.Current.Theme));
+    }
+
     private void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         MessageBox.Show(e.Exception.Message, $"{Name} - Error inesperado", MessageBoxButton.OK, MessageBoxImage.Error);

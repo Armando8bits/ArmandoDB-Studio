@@ -1,18 +1,18 @@
-<Window x:Class="MySmdb.ConnectionDialog"
+﻿<Window x:Class="MySmdb.ConnectionDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Conectar con la base de datos" Width="760" SizeToContent="Height"
+        Title="Conectar con la base de datos" Width="840" SizeToContent="Height"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <Window.Resources>
-        <Style TargetType="Label">
+        <!-- BasedOn: sin él, estos estilos reemplazarían a los del tema Fluent (claro/oscuro). -->
+        <Style TargetType="Label" BasedOn="{StaticResource {x:Type Label}}">
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Padding" Value="0,0,8,0"/>
         </Style>
-        <Style TargetType="TextBox">
+        <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
             <Setter Property="Margin" Value="0,4"/>
-            <Setter Property="Padding" Value="3"/>
         </Style>
-        <Style TargetType="Button">
+        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Padding" Value="12,4"/>
             <Style.Triggers>
                 <!-- Para que el icono también se vea apagado cuando el botón está deshabilitado -->
@@ -30,7 +30,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Izquierda: conexiones guardadas -->
-        <Border Background="#FFF3F5F9" BorderBrush="#FFD6DBE9" BorderThickness="0,0,1,0">
+        <Border Background="{DynamicResource Brush.PanelBackground}" BorderBrush="{DynamicResource Brush.PanelBorder}" BorderThickness="0,0,1,0">
             <DockPanel Margin="12">
                 <TextBlock DockPanel.Dock="Top" Text="Conexiones guardadas" FontWeight="SemiBold" Margin="0,0,0,8"/>
                 <UniformGrid DockPanel.Dock="Bottom" Columns="2" Margin="0,8,0,0">
@@ -65,13 +65,13 @@
                             <DataTemplate>
                                 <StackPanel Margin="2,4" ToolTip="{Binding Summary}">
                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Text="{Binding Summary}" Foreground="Gray" FontSize="11" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource Brush.SecondaryText}" FontSize="11" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
                     <TextBlock x:Name="EmptyHint" Text="Aún no hay conexiones guardadas.&#10;Rellena el formulario y pulsa Guardar o Conectar."
-                               Foreground="Gray" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{DynamicResource Brush.SecondaryText}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center"
                                Margin="16" IsHitTestVisible="False" Visibility="Collapsed"/>
                 </Grid>
             </DockPanel>
@@ -180,7 +180,7 @@
                     <TextBox Grid.Row="1" Grid.Column="1" x:Name="UserBox"/>
 
                     <Label Grid.Row="2" Content="Contraseña:"/>
-                    <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="PasswordBox" Margin="0,4" Padding="3"/>
+                    <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="PasswordBox" Margin="0,4"/>
 
                     <CheckBox Grid.Row="3" Grid.Column="1" x:Name="RememberCheck" Content="Recordar contraseña" Margin="0,2,0,6"
                               ToolTip="Se guarda cifrada para tu usuario de Windows"/>
@@ -203,7 +203,7 @@
                         <Button DockPanel.Dock="Right" Content="Examinar..." Margin="6,4,0,4" Click="Browse_Click"/>
                         <TextBox x:Name="FileBox" ToolTip="Archivo de la base de datos SQLite"/>
                     </DockPanel>
-                    <TextBlock Grid.Row="1" Grid.Column="1" Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,0"
+                    <TextBlock Grid.Row="1" Grid.Column="1" Foreground="{DynamicResource Brush.SecondaryText}" TextWrapping="Wrap" Margin="0,2,0,0"
                                Text="Si el archivo no existe, se crea una base de datos nueva al conectar."/>
                 </Grid>
             </StackPanel>

@@ -5,9 +5,12 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Editing;
 using ICSharpCode.AvalonEdit.Highlighting;
 using System.Data.Common;
 
@@ -29,8 +32,6 @@ public partial class QueryTab : UserControl
     private const double MaxStackedGridHeight = 260;
     /// <summary>A partir de estas filas, guardar a archivo muestra una barra de progreso.</summary>
     private const int ExportProgressThreshold = 5000;
-
-    private static readonly Brush AlternateRowBrush = new SolidColorBrush(Color.FromRgb(0xF1, 0xF5, 0xFB));
 
     private readonly string _defaultTitle;
     private readonly List<DataGrid> _grids = new();
@@ -91,7 +92,19 @@ public partial class QueryTab : UserControl
 
         Editor.Options.ConvertTabsToSpaces = true;
         Messages.TextArea.TextView.LineTransformers.Add(new ErrorLineColorizer());
+        foreach (var editor in new[] { Editor, Messages })
+        {
+            // El editor no lo pinta el tema Fluent: sus colores salen de la paleta y cambian solos con el tema.
+            editor.SetResourceReference(BackgroundProperty, "Brush.EditorBackground");
+            editor.SetResourceReference(ForegroundProperty, "Brush.EditorForeground");
+            editor.SetResourceReference(TextEditor.LineNumbersForegroundProperty, "Brush.EditorLineNumbers");
+            editor.TextArea.SetResourceReference(TextArea.SelectionBrushProperty, "Brush.EditorSelection");
+            // Al seleccionar se conservan los colores del resaltado, como en Visual Studio.
+            editor.TextArea.SelectionForeground = null;
+            editor.TextArea.SelectionBorder = null;
+        }
         ApplyFont();
+        ApplyTheme();
         Editor.TextChanged += (_, _) =>
         {
             if (IsDirty) return;
@@ -112,6 +125,17 @@ public partial class QueryTab : UserControl
         Messages.FontSize = settings.EditorFontSize;
         foreach (var grid in _grids)
             grid.FontSize = settings.GridFontSize;
+    }
+
+    /// <summary>Lo que no se actualiza solo al cambiar de tema: cursor y redibujado del resaltado.</summary>
+    public void ApplyTheme()
+    {
+        var foreground = Theme.Brush("Brush.EditorForeground");
+        foreach (var editor in new[] { Editor, Messages })
+        {
+            editor.TextArea.Caret.CaretBrush = foreground;
+            editor.TextArea.TextView.Redraw();
+        }
     }
 
     public void SetText(string text)
@@ -419,18 +443,20 @@ public partial class QueryTab : UserControl
             EnableRowVirtualization = true,
             EnableColumnVirtualization = true,
             GridLinesVisibility = DataGridGridLinesVisibility.All,
-            HorizontalGridLinesBrush = Brushes.Gainsboro,
-            VerticalGridLinesBrush = Brushes.Gainsboro,
-            Background = Brushes.White,
-            AlternatingRowBackground = AlternateRowBrush,
             BorderThickness = new Thickness(0),
-            RowHeaderWidth = 46,
+            RowHeaderWidth = 60,
             MaxColumnWidth = 600,
             FontFamily = new FontFamily("Segoe UI"),
             FontSize = AppSettings.Current.GridFontSize,
         };
         _grids.Add(grid);
+        grid.SetResourceReference(DataGrid.BackgroundProperty, "Brush.GridBackground");
+        grid.SetResourceReference(DataGrid.RowBackgroundProperty, "Brush.GridBackground");
+        grid.SetResourceReference(DataGrid.AlternatingRowBackgroundProperty, "Brush.GridAlternate");
+        grid.SetResourceReference(DataGrid.HorizontalGridLinesBrushProperty, "Brush.GridLines");
+        grid.SetResourceReference(DataGrid.VerticalGridLinesBrushProperty, "Brush.GridLines");
         VirtualizingPanel.SetVirtualizationMode(grid, VirtualizationMode.Recycling);
+        ApplyCompactGridStyles(grid);
 
         var headerTemplate = (DataTemplate)FindResource("ColumnHeaderTemplate");
         for (int i = 0; i < result.Columns.Length; i++)
@@ -460,6 +486,52 @@ public partial class QueryTab : UserControl
 
         grid.ItemsSource = result.Rows;
         return grid;
+    }
+
+    /// <summary>
+    /// El tema Fluent da filas altas (unos 32 px) y fija su propio fondo, que anula el sombreado alterno.
+    /// Estos estilos heredan de los de Fluent: filas compactas y sombreado por índice de alternancia.
+    /// La cabecera de fila lleva plantilla propia: la de Fluent recorta los números de más de una cifra.
+    /// </summary>
+    private void ApplyCompactGridStyles(DataGrid grid)
+    {
+        grid.MinRowHeight = 0;
+        grid.AlternationCount = 2;
+
+        var rowStyle = new Style(typeof(DataGridRow), TryFindResource(typeof(DataGridRow)) as Style);
+        rowStyle.Setters.Add(new Setter(MinHeightProperty, 0.0));
+        rowStyle.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("Brush.GridBackground")));
+        var alternate = new Trigger { Property = ItemsControl.AlternationIndexProperty, Value = 1 };
+        alternate.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("Brush.GridAlternate")));
+        rowStyle.Triggers.Add(alternate);
+        grid.RowStyle = rowStyle;
+
+        var cellStyle = new Style(typeof(DataGridCell), TryFindResource(typeof(DataGridCell)) as Style);
+        cellStyle.Setters.Add(new Setter(MinHeightProperty, 0.0));
+        cellStyle.Setters.Add(new Setter(PaddingProperty, new Thickness(4, 1, 4, 1)));
+        grid.CellStyle = cellStyle;
+
+        // Número de fila alineado a la derecha, sobre el mismo gris que las franjas de pestañas.
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(BackgroundProperty));
+        border.SetResourceReference(Border.BorderBrushProperty, "Brush.GridLines");
+        border.SetValue(Border.BorderThicknessProperty, new Thickness(0, 0, 1, 1));
+        var number = new FrameworkElementFactory(typeof(ContentPresenter));
+        number.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Right);
+        number.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+        number.SetValue(MarginProperty, new Thickness(4, 0, 6, 0));
+        border.AppendChild(number);
+
+        var rowHeaderStyle = new Style(typeof(DataGridRowHeader));
+        rowHeaderStyle.Setters.Add(new Setter(TemplateProperty, new ControlTemplate(typeof(DataGridRowHeader)) { VisualTree = border }));
+        rowHeaderStyle.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("Brush.TabStrip")));
+        rowHeaderStyle.Setters.Add(new Setter(ForegroundProperty, new DynamicResourceExtension("Brush.SecondaryText")));
+        grid.RowHeaderStyle = rowHeaderStyle;
+
+        var columnHeaderStyle = new Style(typeof(DataGridColumnHeader), TryFindResource(typeof(DataGridColumnHeader)) as Style);
+        columnHeaderStyle.Setters.Add(new Setter(MinHeightProperty, 0.0));
+        columnHeaderStyle.Setters.Add(new Setter(PaddingProperty, new Thickness(6, 3, 6, 3)));
+        grid.ColumnHeaderStyle = columnHeaderStyle;
     }
 
     /// <summary>Guarda un resultado como .csv (comas) o .txt (tabuladores), con encabezados.</summary>
@@ -557,7 +629,7 @@ public class ErrorLineColorizer : ICSharpCode.AvalonEdit.Rendering.DocumentColor
         if (line.Length < Prefix.Length || CurrentContext.Document.GetText(line.Offset, Prefix.Length) != Prefix) return;
         ChangeLinePart(line.Offset, line.EndOffset, element =>
         {
-            element.TextRunProperties.SetForegroundBrush(Brushes.Firebrick);
+            element.TextRunProperties.SetForegroundBrush(Theme.Brush("Brush.ErrorText"));
             var face = element.TextRunProperties.Typeface;
             element.TextRunProperties.SetTypeface(new Typeface(face.FontFamily, face.Style, FontWeights.SemiBold, face.Stretch));
         });
