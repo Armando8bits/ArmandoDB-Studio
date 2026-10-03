@@ -1,0 +1,44 @@
+# Compilación
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+[Ll]og/
+*.binlog
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+*.rsuser
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# Publicación
+publish/
+*.pubxml.user
+
+# Pruebas y cobertura
+TestResults/
+coverage*.json
+coverage*.xml
+
+# Bases de datos SQLite de prueba
+*.db
+*.sqlite
+*.sqlite3
+*.db3
+
+# Sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Configuración local de Claude Code
+.claude/settings.local.json

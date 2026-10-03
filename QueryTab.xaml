@@ -1,0 +1,35 @@
+<UserControl x:Class="MySmdb.QueryTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:avalon="http://icsharpcode.net/sharpdevelop/avalonedit">
+    <UserControl.Resources>
+        <!-- Con plantilla propia el encabezado no se come los "_" de los nombres de columna. -->
+        <DataTemplate x:Key="ColumnHeaderTemplate">
+            <TextBlock Text="{Binding}"/>
+        </DataTemplate>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" MinHeight="60"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*" MinHeight="60"/>
+        </Grid.RowDefinitions>
+
+        <avalon:TextEditor x:Name="Editor" FontFamily="Consolas" FontSize="13"
+                           ShowLineNumbers="True" SyntaxHighlighting="TSQL"
+                           HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
+
+        <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="#FFD6DBE9"/>
+
+        <TabControl Grid.Row="2" x:Name="ResultTabs">
+            <TabItem Header="Cuadrícula">
+                <ContentControl x:Name="ResultsHost"/>
+            </TabItem>
+            <TabItem Header="Mensajes">
+                <avalon:TextEditor x:Name="Messages" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Padding="4,2"
+                                   WordWrap="True"
+                                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>
