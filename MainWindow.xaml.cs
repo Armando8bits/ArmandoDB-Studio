@@ -137,6 +137,11 @@ public partial class MainWindow : Window
             e.Handled = true;
             NewQueryFromCurrent();
         }
+        else if (modifiers == ModifierKeys.Control && e.Key == Key.L)
+        {
+            e.Handled = true;
+            if (Current != null) await Current.ExplainAsync();
+        }
         else if (modifiers == ModifierKeys.Control && e.Key == Key.B)
         {
             e.Handled = true;
@@ -185,6 +190,11 @@ public partial class MainWindow : Window
     private void Exit_Click(object sender, RoutedEventArgs e) => Close();
     private async void Execute_Click(object sender, RoutedEventArgs e) => await ExecuteCurrentAsync();
     private void Cancel_Click(object sender, RoutedEventArgs e) => Current?.Cancel();
+
+    private async void Explain_Click(object sender, RoutedEventArgs e)
+    {
+        if (Current != null) await Current.ExplainAsync();
+    }
     private void TogglePin_Click(object sender, RoutedEventArgs e) { if (ActiveEntry != null) TogglePin(ActiveEntry); }
     private void NextTab_Click(object sender, RoutedEventArgs e) => SelectRelative(1);
     private void PreviousTab_Click(object sender, RoutedEventArgs e) => SelectRelative(-1);
@@ -872,7 +882,7 @@ public partial class MainWindow : Window
         DatabaseCombo.IsEnabled = tab is { IsRunning: false };
         _syncingCombo = false;
 
-        ExecuteButton.IsEnabled = tab is { IsRunning: false };
+        ExecuteButton.IsEnabled = ExplainButton.IsEnabled = tab is { IsRunning: false };
         CancelButton.IsEnabled = tab is { IsRunning: true };
         DisconnectButton.IsEnabled = _databases.Count > 0;
 

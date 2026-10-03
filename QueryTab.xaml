@@ -30,6 +30,11 @@
                                    WordWrap="True"
                                    VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
             </TabItem>
+            <!-- Sin ajuste de línea: el árbol del plan se lee por su sangría. -->
+            <TabItem Header="Plan de ejecución">
+                <avalon:TextEditor x:Name="PlanView" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Padding="4,2"
+                                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+            </TabItem>
         </TabControl>
     </Grid>
 </UserControl>

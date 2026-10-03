@@ -19,6 +19,7 @@
             </MenuItem>
             <MenuItem Header="_Consulta">
                 <MenuItem Header="_Ejecutar" InputGestureText="Ctrl+E / F5" Click="Execute_Click"/>
+                <MenuItem Header="Mostrar el _plan de ejecución" InputGestureText="Ctrl+L" Click="Explain_Click"/>
                 <MenuItem Header="_Cancelar ejecución" InputGestureText="Alt+Pausa" Click="Cancel_Click"/>
             </MenuItem>
             <MenuItem Header="_Ventana">
@@ -60,6 +61,17 @@
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="▶" Foreground="#FF2E9E4F" Margin="0,0,4,0"/>
                         <TextBlock Text="Ejecutar"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="ExplainButton" Click="Explain_Click" Padding="6,2"
+                        ToolTip="Plan de ejecución estimado (Ctrl+L): de la selección o de todo el contenido, sin ejecutar la consulta">
+                    <StackPanel Orientation="Horizontal">
+                        <!-- Árbol de nodos -->
+                        <Canvas Width="14" Height="14" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Path Data="M4,3.5 V10.5 H9 M4,7 H9" Stroke="#FF3794FF" StrokeThickness="1.2"/>
+                            <Path Data="M1.5,1 H6.5 V5 H1.5 Z M9,5 H13 V9 H9 Z M9,8.5 H13 V12.5 H9 Z" Fill="#FF3794FF"/>
+                        </Canvas>
+                        <TextBlock Text="Plan"/>
                     </StackPanel>
                 </Button>
                 <Button x:Name="CancelButton" Click="Cancel_Click" Padding="6,2" IsEnabled="False" ToolTip="Cancelar ejecución (Alt+Pausa)">

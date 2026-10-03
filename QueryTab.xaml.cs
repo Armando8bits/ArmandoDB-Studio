@@ -92,7 +92,8 @@ public partial class QueryTab : UserControl
 
         Editor.Options.ConvertTabsToSpaces = true;
         Messages.TextArea.TextView.LineTransformers.Add(new ErrorLineColorizer());
-        foreach (var editor in new[] { Editor, Messages })
+        PlanView.TextArea.TextView.LineTransformers.Add(new ErrorLineColorizer());
+        foreach (var editor in new[] { Editor, Messages, PlanView })
         {
             // El editor no lo pinta el tema Fluent: sus colores salen de la paleta y cambian solos con el tema.
             editor.SetResourceReference(BackgroundProperty, "Brush.EditorBackground");
@@ -123,6 +124,7 @@ public partial class QueryTab : UserControl
         Editor.FontFamily = family;
         Editor.FontSize = settings.EditorFontSize;
         Messages.FontSize = settings.EditorFontSize;
+        PlanView.FontSize = settings.EditorFontSize;
         foreach (var grid in _grids)
             grid.FontSize = settings.GridFontSize;
     }
@@ -131,7 +133,7 @@ public partial class QueryTab : UserControl
     public void ApplyTheme()
     {
         var foreground = Theme.Brush("Brush.EditorForeground");
-        foreach (var editor in new[] { Editor, Messages })
+        foreach (var editor in new[] { Editor, Messages, PlanView })
         {
             editor.TextArea.Caret.CaretBrush = foreground;
             editor.TextArea.TextView.Redraw();
@@ -184,30 +186,39 @@ public partial class QueryTab : UserControl
         catch (Exception ex)
         {
             Messages.Text = "Error al cambiar de base de datos: " + ex.Message.ReplaceLineEndings(" ");
-            ResultTabs.SelectedIndex = 1;
+            ResultTabs.SelectedIndex = MessagesTab;
         }
         StateChanged?.Invoke(this);
     }
 
-    /// <summary>Ejecuta la selección si la hay; si no, el contenido completo de la pestaña.</summary>
-    public async Task ExecuteAsync()
-    {
-        if (IsRunning) return;
+    private const int GridTab = 0, MessagesTab = 1, PlanTab = 2;
 
+    /// <summary>
+    /// Sentencias de la selección si la hay; si no, de todo el contenido. Devuelve null (y lo explica en
+    /// la pestaña indicada) cuando no hay nada que ejecutar.
+    /// </summary>
+    private (List<SqlStatement> Statements, int LineOffset)? ScriptToRun(TextEditor emptyMessageView, int emptyMessageTab)
+    {
         bool hasSelection = Editor.SelectionLength > 0;
         string sql = hasSelection ? Editor.SelectedText : Editor.Text;
         int lineOffset = hasSelection ? Editor.Document.GetLineByOffset(Editor.SelectionStart).LineNumber - 1 : 0;
 
         bool mysql = Profile.Kind == DbKind.MySql;
         var statements = SqlSplitter.Split(sql, mysql);
-        if (statements.Count == 0)
-        {
-            Messages.Text = "No hay ninguna sentencia que ejecutar: el texto está vacío o solo contiene comentarios.\n"
-                + (mysql ? "En MySQL, '#' y '-- '" : "En SQLite, '--'")
-                + " comentan el resto de la línea, y /* ... */ comenta un bloque.";
-            ResultTabs.SelectedIndex = 1;
-            return;
-        }
+        if (statements.Count > 0) return (statements, lineOffset);
+
+        emptyMessageView.Text = "No hay ninguna sentencia que ejecutar: el texto está vacío o solo contiene comentarios.\n"
+            + (mysql ? "En MySQL, '#' y '-- '" : "En SQLite, '--'")
+            + " comentan el resto de la línea, y /* ... */ comenta un bloque.";
+        ResultTabs.SelectedIndex = emptyMessageTab;
+        return null;
+    }
+
+    /// <summary>Ejecuta la selección si la hay; si no, el contenido completo de la pestaña.</summary>
+    public async Task ExecuteAsync()
+    {
+        if (IsRunning || ScriptToRun(Messages, MessagesTab) is not { } script) return;
+        var (statements, lineOffset) = script;
 
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
@@ -277,7 +288,7 @@ public partial class QueryTab : UserControl
 
         ShowResults(results);
         Messages.Text = log.ToString();
-        ResultTabs.SelectedIndex = results.Count > 0 && !failed ? 0 : 1;
+        ResultTabs.SelectedIndex = results.Count > 0 && !failed ? GridTab : MessagesTab;
 
         CurrentDatabase = database;
         IsRunning = false;
@@ -287,6 +298,183 @@ public partial class QueryTab : UserControl
         RowsText = $"{results.Sum(r => r.Rows.Count)} filas";
         TimeText = watch.Elapsed.ToString(@"hh\:mm\:ss\.fff");
         StateChanged?.Invoke(this);
+    }
+
+    /// <summary>
+    /// Muestra el plan de ejecución estimado de la selección o de todo el contenido, sin ejecutar las consultas.
+    /// MySQL: EXPLAIN FORMAT=TREE (o el EXPLAIN clásico en MariaDB y MySQL anteriores a 8.0.16).
+    /// SQLite: EXPLAIN QUERY PLAN, dibujado como árbol.
+    /// </summary>
+    public async Task ExplainAsync()
+    {
+        if (IsRunning || ScriptToRun(PlanView, PlanTab) is not { } script) return;
+        var (statements, lineOffset) = script;
+
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+        IsRunning = true;
+        StatusText = "Generando el plan de ejecución...";
+        RowsText = "";
+        TimeText = "";
+        StateChanged?.Invoke(this);
+
+        var output = new StringBuilder();
+        bool failed = false, cancelled = false;
+        string? database = CurrentDatabase;
+        var watch = Stopwatch.StartNew();
+
+        try
+        {
+            await Task.Run(async () =>
+            {
+                await EnsureOpenAsync(token);
+                foreach (var statement in statements)
+                {
+                    token.ThrowIfCancellationRequested();
+                    int line = statement.Line + lineOffset;
+                    output.AppendLine($"-- Línea {line}: {FirstLine(statement.Text)}");
+                    try
+                    {
+                        output.AppendLine(await PlanAsync(statement.Text, token));
+                    }
+                    catch (DbException ex) when (!token.IsCancellationRequested)
+                    {
+                        output.AppendLine($"Error {Db.ErrorCode(ex)}, línea {line}: {ex.Message.ReplaceLineEndings(" ")}");
+                        failed = true;
+                    }
+                    output.AppendLine();
+                }
+                database = await ReadCurrentDatabaseAsync() ?? database;
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            cancelled = true;
+        }
+        catch (Exception) when (token.IsCancellationRequested)
+        {
+            cancelled = true;
+        }
+        catch (Exception ex)
+        {
+            output.AppendLine("Error: " + ex.Message.ReplaceLineEndings(" "));
+            failed = true;
+        }
+
+        watch.Stop();
+        _cts.Dispose();
+        _cts = null;
+        if (cancelled) output.AppendLine("Cancelado por el usuario.");
+
+        PlanView.Text = output.ToString();
+        PlanView.ScrollToHome();
+        ResultTabs.SelectedIndex = PlanTab;
+
+        CurrentDatabase = database;
+        IsRunning = false;
+        StatusText = cancelled ? "Plan de ejecución cancelado."
+            : failed ? "Plan de ejecución generado con errores."
+            : "Plan de ejecución generado.";
+        TimeText = watch.Elapsed.ToString(@"hh\:mm\:ss\.fff");
+        StateChanged?.Invoke(this);
+    }
+
+    private static readonly Regex Explainable = new(@"^\s*\(*\s*(SELECT|WITH|INSERT|UPDATE|DELETE|REPLACE|TABLE|VALUES)\b", RegexOptions.IgnoreCase);
+    private static readonly Regex AlreadyExplain = new(@"^\s*(EXPLAIN|DESCRIBE|DESC)\b", RegexOptions.IgnoreCase);
+    private static readonly Regex UseStatement = new(@"^\s*USE\b", RegexOptions.IgnoreCase);
+
+    /// <summary>Plan de una sentencia, como texto. Nunca ejecuta la consulta (salvo que ya venga con EXPLAIN ANALYZE).</summary>
+    private async Task<string> PlanAsync(string sql, CancellationToken token)
+    {
+        // Un USE previo cambia la base con la que se explican las siguientes sentencias, así que se aplica.
+        if (UseStatement.IsMatch(sql))
+        {
+            await QueryAsync(sql, token);
+            return "(USE aplicado; no tiene plan)";
+        }
+        // Si el usuario ya escribió EXPLAIN, se respeta tal cual.
+        if (AlreadyExplain.IsMatch(sql))
+            return FormatPlanResult(await QueryAsync(sql, token));
+        if (!Explainable.IsMatch(sql))
+            return "(sin plan: solo se explican SELECT, WITH, INSERT, UPDATE, DELETE y REPLACE)";
+
+        if (Profile.Kind == DbKind.Sqlite)
+            return FormatSqliteTree(await QueryAsync("EXPLAIN QUERY PLAN " + sql, token));
+
+        try
+        {
+            return FormatPlanResult(await QueryAsync("EXPLAIN FORMAT=TREE " + sql, token));
+        }
+        catch (DbException) when (!token.IsCancellationRequested)
+        {
+            // MariaDB y MySQL < 8.0.16 no tienen FORMAT=TREE. Si la sentencia es la que falla, el EXPLAIN clásico dará el error real.
+            return FormatPlanResult(await QueryAsync("EXPLAIN " + sql, token));
+        }
+    }
+
+    private async Task<ResultSet> QueryAsync(string sql, CancellationToken token)
+    {
+        await using var cmd = _conn!.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.CommandTimeout = 0;
+        await using var reader = await cmd.ExecuteReaderAsync(token);
+        var columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
+        var result = new ResultSet { Columns = columns };
+        while (await reader.ReadAsync(token))
+        {
+            var row = new object?[columns.Length];
+            for (int i = 0; i < row.Length; i++)
+                row[i] = ReadValue(reader, i);
+            result.Rows.Add(row);
+        }
+        return result;
+    }
+
+    /// <summary>Una sola columna (FORMAT=TREE, JSON): su texto tal cual. Varias columnas (EXPLAIN clásico): tabla de texto.</summary>
+    private static string FormatPlanResult(ResultSet result)
+    {
+        if (result.Columns.Length == 1)
+            return string.Join(Environment.NewLine, result.Rows.Select(r => CellText.Format(r[0]))).TrimEnd();
+        return FormatTable(result);
+    }
+
+    /// <summary>EXPLAIN QUERY PLAN de SQLite (id, parent, detail) dibujado como lo hace el cliente sqlite3.</summary>
+    private static string FormatSqliteTree(ResultSet result)
+    {
+        var rows = result.Rows.Select(r => (Id: Convert.ToInt64(r[0]), Parent: Convert.ToInt64(r[1]), Detail: CellText.Format(r[3]))).ToList();
+        var sb = new StringBuilder("QUERY PLAN");
+        void Render(long parent, string indent)
+        {
+            var children = rows.Where(r => r.Parent == parent).ToList();
+            for (int i = 0; i < children.Count; i++)
+            {
+                bool last = i == children.Count - 1;
+                sb.AppendLine().Append(indent).Append(last ? "`--" : "|--").Append(children[i].Detail);
+                Render(children[i].Id, indent + (last ? "   " : "|  "));
+            }
+        }
+        Render(0, "");
+        return sb.ToString();
+    }
+
+    /// <summary>Tabla de texto con columnas alineadas, para el EXPLAIN clásico.</summary>
+    private static string FormatTable(ResultSet result)
+    {
+        var cells = result.Rows.Select(r => r.Select(v => CellText.Format(v).ReplaceLineEndings(" ")).ToArray()).ToList();
+        var widths = result.Columns.Select((c, i) => Math.Max(c.Length, cells.Count == 0 ? 0 : cells.Max(r => r[i].Length))).ToArray();
+        string separator = "+" + string.Join("+", widths.Select(w => new string('-', w + 2))) + "+";
+        string Row(IReadOnlyList<string> values) => "| " + string.Join(" | ", values.Select((v, i) => v.PadRight(widths[i]))) + " |";
+
+        var lines = new List<string> { separator, Row(result.Columns), separator };
+        lines.AddRange(cells.Select(Row));
+        lines.Add(separator);
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string FirstLine(string sql)
+    {
+        string first = sql.Split('\n')[0].TrimEnd();
+        return first.Length < sql.Length ? first + " ..." : first;
     }
 
     private async Task EnsureOpenAsync(CancellationToken token)
@@ -317,8 +505,7 @@ public partial class QueryTab : UserControl
 
     private async Task RunStatementAsync(string sql, List<ResultSet> results, StringBuilder log, CancellationToken token)
     {
-        string firstLine = sql.Split('\n')[0].TrimEnd();
-        log.AppendLine(Db.Prompt(Profile.Kind) + (firstLine.Length < sql.Length ? firstLine + " ..." : firstLine));
+        log.AppendLine(Db.Prompt(Profile.Kind) + FirstLine(sql));
 
         var watch = Stopwatch.StartNew();
         await using var cmd = _conn!.CreateCommand();
