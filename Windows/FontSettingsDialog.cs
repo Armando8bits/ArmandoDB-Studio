@@ -1,58 +1,9 @@
 using System.Globalization;
-using System.IO;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
 namespace MySmdb;
-
-public class AppSettings
-{
-    private static readonly string FilePath = Path.Combine(App.DataFolder, "settings.json");
-
-    public string EditorFont { get; set; } = "Consolas";
-    public double EditorFontSize { get; set; } = 13;
-    public double GridFontSize { get; set; } = 12;
-
-    /// <summary>Vista dividida: true = izquierda/derecha; false = arriba/abajo.</summary>
-    public bool SplitSideBySide { get; set; } = true;
-
-    public bool ShowExplorer { get; set; } = true;
-
-    /// <summary>"System" (según Windows), "Light" u "Dark".</summary>
-    public string Theme { get; set; } = "System";
-
-    /// <summary>Abreviatura + Tab expande un fragmento de código.</summary>
-    public bool SnippetsEnabled { get; set; } = true;
-
-    /// <summary>Confirmar UPDATE/DELETE sin WHERE, DROP y TRUNCATE en cualquier conexión.</summary>
-    public bool ConfirmDangerous { get; set; } = true;
-
-    /// <summary>En conexiones de producción, confirmar cualquier sentencia que modifique datos o estructura.</summary>
-    public bool ConfirmProductionWrites { get; set; } = true;
-
-    public static AppSettings Current { get; } = Load();
-
-    private static AppSettings Load()
-    {
-        try
-        {
-            if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings();
-        }
-        catch
-        {
-        }
-        return new AppSettings();
-    }
-
-    public void Save()
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
-    }
-}
 
 /// <summary>Diálogo para elegir la fuente del editor y el tamaño de letra de los resultados.</summary>
 public class FontSettingsDialog : Window

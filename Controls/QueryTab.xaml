@@ -60,7 +60,25 @@
 
         <TabControl Grid.Row="2" x:Name="ResultTabs">
             <TabItem Header="Cuadrícula">
-                <ContentControl x:Name="ResultsHost"/>
+                <DockPanel>
+                    <!-- Filtro sobre los resultados ya obtenidos: no vuelve a ejecutar la consulta.
+                         Oculto por defecto para no quitar espacio; se muestra con Ctrl+Mayús+L o desde el menú de la cuadrícula. -->
+                    <DockPanel DockPanel.Dock="Top" x:Name="ResultFilterBar" Margin="4,4,4,2" Visibility="Collapsed">
+                        <Grid DockPanel.Dock="Left" Width="300">
+                            <TextBox x:Name="ResultFilter" TextChanged="ResultFilter_TextChanged" IsEnabled="False"
+                                     PreviewKeyDown="ResultFilter_PreviewKeyDown"
+                                     ToolTip="Muestra solo las filas que contienen este texto en alguna columna. Esc lo oculta."/>
+                            <TextBlock x:Name="ResultFilterHint" Text="Filtrar resultados..." Margin="11,0,0,0" VerticalAlignment="Center"
+                                       IsHitTestVisible="False" Foreground="{DynamicResource Brush.SecondaryText}"/>
+                        </Grid>
+                        <!-- El texto se borra con la "x" que el propio cuadro muestra al escribir. -->
+                        <Button DockPanel.Dock="Left" Content="Cerrar filtro" Margin="6,0,0,0" Padding="10,2" Click="CloseResultFilter_Click"
+                                ToolTip="Cerrar el filtro (Esc o Ctrl+Mayús+L)"/>
+                        <TextBlock x:Name="FilterInfo" Margin="12,0,4,0" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource Brush.SecondaryText}"/>
+                    </DockPanel>
+                    <ContentControl x:Name="ResultsHost"/>
+                </DockPanel>
             </TabItem>
             <TabItem Header="Mensajes">
                 <avalon:TextEditor x:Name="Messages" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Padding="4,2"

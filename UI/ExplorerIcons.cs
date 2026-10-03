@@ -5,7 +5,7 @@ using System.Windows.Shapes;
 
 namespace MySmdb;
 
-public enum ExplorerIcon { Server, Database, Table, View, Column, KeyColumn }
+public enum ExplorerIcon { Server, Database, Table, View, Column, KeyColumn, Folder, Procedure, Function, Trigger, Index, Connect, Disconnect }
 
 /// <summary>Iconos vectoriales (16x16) del explorador de objetos, dibujados en código.</summary>
 public static class ExplorerIcons
@@ -22,6 +22,16 @@ public static class ExplorerIcons
     private static readonly Brush Green = Frozen(0x3F, 0xC0, 0x5A);
     private static readonly Brush Gray = Frozen(0x7A, 0x7A, 0x7A);
     private static readonly Brush GrayLight = Frozen(0xD9, 0xD9, 0xD9);
+    private static readonly Brush PlugGreen = Frozen(0x34, 0xA8, 0x53);
+    private static readonly Brush PlugGreenDark = Frozen(0x1F, 0x6E, 0x36);
+    private static readonly Brush Red = Frozen(0xD1, 0x34, 0x38);
+    private static readonly Brush FolderYellow = Frozen(0xE8, 0xB6, 0x4C);
+    private static readonly Brush FolderDark = Frozen(0xA0, 0x7A, 0x1C);
+    private static readonly Brush Violet = Frozen(0x6A, 0x5A, 0xCD);
+    private static readonly Brush Teal = Frozen(0x1F, 0x9E, 0x8E);
+    private static readonly Brush TealDark = Frozen(0x13, 0x6B, 0x60);
+    private static readonly Brush Orange = Frozen(0xF2, 0x8C, 0x28);
+    private static readonly Brush OrangeDark = Frozen(0xA0, 0x52, 0x0A);
 
     private static Brush Frozen(byte r, byte g, byte b)
     {
@@ -86,6 +96,50 @@ public static class ExplorerIcons
                 Add("M5.5,2.5 H10.5 V13.5 H5.5 Z", Brushes.White, Gray);
                 Add("M5.5,2.5 H10.5 V5.5 H5.5 Z", GrayLight, Gray);
                 Add("M5.5,9.5 H10.5", null, Gray);
+                break;
+
+            case ExplorerIcon.Folder:
+                Add("M1.5,3.5 H6 L7.5,5 H14.5 V13.5 H1.5 Z", FolderYellow, FolderDark);
+                Add("M1.5,6.5 H14.5", null, FolderDark);
+                break;
+
+            case ExplorerIcon.Procedure:
+                // Hoja con líneas de código.
+                Add("M3,1.5 H10.5 L13,4 V14.5 H3 Z", Brushes.White, Violet);
+                Add("M5,7 H11 M5,9.5 H11 M5,12 H9", null, Violet);
+                break;
+
+            case ExplorerIcon.Function:
+                // Recuadro con "fx".
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z", Teal, TealDark);
+                canvas.Children.Add(new TextBlock
+                {
+                    Text = "fx", FontSize = 9, FontWeight = FontWeights.Bold, FontStyle = FontStyles.Italic,
+                    Foreground = Brushes.White, Width = 16, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 2.5, 0, 0),
+                });
+                break;
+
+            case ExplorerIcon.Trigger:
+                // Rayo: se dispara ante un evento.
+                Add("M9.5,1 L3.5,9 H7.5 L6.5,15 L12.5,6.5 H8.5 Z", Orange, OrangeDark);
+                break;
+
+            case ExplorerIcon.Index:
+                // Barras ordenadas.
+                Add("M2.5,3 H13.5 M2.5,6.5 H11 M2.5,10 H8.5 M2.5,13.5 H6", null, Blue, 1.8);
+                break;
+
+            case ExplorerIcon.Connect:
+                // Enchufe verde (el mismo del botón Conectar de la pantalla de conexión).
+                Add("M5.5,1.5 V5 M10.5,1.5 V5 M8,12 V15", null, PlugGreenDark, 1.8);
+                Add("M3.5,5 H12.5 V8 C12.5,10.5 10.5,12 8,12 C5.5,12 3.5,10.5 3.5,8 Z", PlugGreen, PlugGreenDark);
+                break;
+
+            case ExplorerIcon.Disconnect:
+                // Enchufe gris tachado en rojo.
+                Add("M5.5,1.5 V5 M10.5,1.5 V5 M8,12 V15", null, SteelDark, 1.8);
+                Add("M3.5,5 H12.5 V8 C12.5,10.5 10.5,12 8,12 C5.5,12 3.5,10.5 3.5,8 Z", Steel, SteelDark);
+                Add("M2.5,14 L13.5,2", null, Red, 2);
                 break;
 
             case ExplorerIcon.KeyColumn:

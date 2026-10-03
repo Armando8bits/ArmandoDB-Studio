@@ -12,6 +12,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.CodeCompletion;
 using ICSharpCode.AvalonEdit.Editing;
 using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Search;
@@ -27,6 +28,8 @@ public class ResultSet
     public required string[] Columns { get; init; }
     public List<object?[]> Rows { get; } = new();
     public bool Truncated { get; set; }
+    /// <summary>Tabla de la que vienen todas las columnas, si es una sola (destino propuesto al exportar como INSERT).</summary>
+    public string? SourceTable { get; set; }
 }
 
 public partial class QueryTab : UserControl
@@ -44,7 +47,7 @@ public partial class QueryTab : UserControl
     private DbConnection? _conn;
     private CancellationTokenSource? _cts;
 
-    public ConnectionProfile Profile { get; }
+    public ConnectionProfile Profile { get; private set; }
     public string? CurrentDatabase { get; private set; }
     public string? FilePath { get; private set; }
     public bool IsDirty { get; private set; }
@@ -114,6 +117,7 @@ public partial class QueryTab : UserControl
         }
         ApplyFont();
         ApplyTheme();
+        _filterTimer.Tick += (_, _) => ApplyResultFilter();
 
         // Ctrl+F, F3 y Mayús+F3: panel de búsqueda del editor, en español.
         _search = SearchPanel.Install(Editor);
@@ -126,14 +130,35 @@ public partial class QueryTab : UserControl
         // Abreviatura + Tab: fragmento de código.
         Editor.TextArea.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Tab && Keyboard.Modifiers == ModifierKeys.None && AppSettings.Current.SnippetsEnabled && TryExpandSnippet())
+            // Con la lista de sugerencias abierta, Tab acepta la sugerencia.
+            if (e.Key == Key.Tab && Keyboard.Modifiers == ModifierKeys.None && _completion == null
+                && AppSettings.Current.SnippetsEnabled && TryExpandSnippet())
                 e.Handled = true;
+        };
+        Editor.TextArea.TextEntering += (_, e) =>
+        {
+            // Un carácter que no forma parte de un nombre (espacio, coma, paréntesis...) cierra la lista sin insertar.
+            if (_completion != null && e.Text.Length > 0 && !IsIdentifierChar(e.Text[0]))
+                _completion.Close();
+        };
+        Editor.TextArea.TextEntered += (_, e) =>
+        {
+            if (e.Text == ".")
+                ShowCompletion(forced: true);
+            else if (AppSettings.Current.AutoCompleteEnabled && _completion == null && e.Text.Length == 1
+                     && (char.IsLetter(e.Text[0]) || e.Text[0] == '_'))
+                ShowCompletion(forced: false);
         };
         Editor.TextChanged += (_, _) =>
         {
             if (IsDirty) return;
             IsDirty = true;
             StateChanged?.Invoke(this);
+        };
+        // Para que los botones Deshacer/Rehacer se activen y desactiven según haya algo que deshacer o rehacer.
+        Editor.Document.UndoStack.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is "CanUndo" or "CanRedo") StateChanged?.Invoke(this);
         };
     }
 
@@ -208,6 +233,103 @@ public partial class QueryTab : UserControl
         ApplicationCommands.Find.Execute(null, Editor.TextArea);
     }
 
+    // ---------- Autocompletado ----------
+
+    private CompletionWindow? _completion;
+
+    private static bool IsIdentifierChar(char c) => char.IsLetterOrDigit(c) || c is '_' or '$';
+
+    /// <summary>
+    /// Lista de sugerencias para la palabra que se está escribiendo. Tras "tabla." o "alias.", las columnas de esa tabla.
+    /// <paramref name="forced"/> (Ctrl+Espacio o "."): se muestra aunque la palabra tenga menos de 2 letras.
+    /// </summary>
+    public void ShowCompletion(bool forced)
+    {
+        if (_completion != null) return;
+        var document = Editor.Document;
+        int caret = Editor.CaretOffset;
+        var line = document.GetLineByOffset(caret);
+        bool mysql = Profile.Kind == DbKind.MySql;
+        if (SqlCompletion.InStringOrComment(document.GetText(line), caret - line.Offset, mysql)) return;
+
+        int start = caret;
+        while (start > 0 && IsIdentifierChar(document.GetCharAt(start - 1))) start--;
+
+        // ¿Hay "algo." delante? Entonces se sugieren las columnas de "algo" (tabla o alias).
+        string? qualifier = null;
+        if (start > 0 && document.GetCharAt(start - 1) == '.')
+        {
+            int end = start - 1, begin = end;
+            if (begin > 0 && document.GetCharAt(begin - 1) == '`')
+            {
+                int open = document.Text.LastIndexOf('`', Math.Max(0, begin - 2));
+                if (open >= 0 && open < begin - 1) qualifier = document.GetText(open + 1, begin - 2 - open);
+            }
+            else
+            {
+                while (begin > 0 && IsIdentifierChar(document.GetCharAt(begin - 1))) begin--;
+                if (begin < end) qualifier = document.GetText(begin, end - begin);
+            }
+            if (qualifier == null) return;
+        }
+
+        string prefix = document.GetText(start, caret - start);
+        if (!forced && prefix.Length < 2) return;
+
+        var schema = SchemaCache.TryGet(Profile, CurrentDatabase);
+        if (schema == null && qualifier != null && !string.IsNullOrEmpty(CurrentDatabase))
+        {
+            // El esquema aún se está cargando: se reintenta al terminar, si el cursor sigue en el mismo sitio.
+            SchemaCache.GetAsync(Profile, CurrentDatabase).ContinueWith(task =>
+            {
+                if (task.IsCompletedSuccessfully && Editor.CaretOffset == caret) ShowCompletion(forced);
+            }, TaskScheduler.FromCurrentSynchronizationContext());
+            return;
+        }
+
+        var items = SqlCompletion.Suggestions(document.Text, caret, qualifier, schema);
+        if (items.Count == 0) return;
+
+        var window = new CompletionWindow(Editor.TextArea) { StartOffset = start, EndOffset = caret, MinWidth = 300, MaxHeight = 320 };
+        window.SetResourceReference(BackgroundProperty, "Brush.PanelBackground");
+        window.SetResourceReference(BorderBrushProperty, "Brush.PanelBorder");
+        window.SetResourceReference(ForegroundProperty, "Brush.EditorForeground");
+        foreach (var item in items) window.CompletionList.CompletionData.Add(item);
+        window.Closed += (_, _) => _completion = null;
+        _completion = window;
+        window.Show();
+
+        if (prefix.Length > 0) window.CompletionList.SelectItem(prefix);
+        // Al escribir, si nada coincide con lo escrito, no se molesta con una lista vacía.
+        if (!forced && window.CompletionList.SelectedItem == null) window.Close();
+    }
+
+    // ---------- Formato ----------
+
+    /// <summary>Formatea la selección o, si no hay, todo el script (se deshace con Ctrl+Z). Devuelve un aviso si no se pudo.</summary>
+    public string? FormatSql()
+    {
+        bool selection = Editor.SelectionLength > 0;
+        string text = selection ? Editor.SelectedText : Editor.Text;
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (!SqlFormatter.CanFormat(text))
+            return "No se formatean scripts con DELIMITER (procedimientos o triggers): su cuerpo se dejaría igual de todos modos.";
+
+        string formatted = SqlFormatter.Format(text, Profile.Kind == DbKind.MySql);
+        if (selection)
+        {
+            int start = Editor.SelectionStart;
+            Editor.Document.Replace(start, Editor.SelectionLength, formatted);
+            Editor.Select(start, formatted.Length);
+        }
+        else
+        {
+            Editor.Document.Replace(0, Editor.Document.TextLength, formatted + "\n");
+            Editor.CaretOffset = 0;
+        }
+        return null;
+    }
+
     /// <summary>Si justo antes del cursor hay una abreviatura conocida, la sustituye por su fragmento.</summary>
     private bool TryExpandSnippet()
     {
@@ -263,6 +385,7 @@ public partial class QueryTab : UserControl
     public void SetText(string text)
     {
         Editor.Text = text;
+        Editor.Document.UndoStack.ClearAll();   // el texto inicial no es algo que se pueda "deshacer"
         IsDirty = false;
         StateChanged?.Invoke(this);
     }
@@ -270,6 +393,7 @@ public partial class QueryTab : UserControl
     public void LoadFile(string path)
     {
         Editor.Text = File.ReadAllText(path);
+        Editor.Document.UndoStack.ClearAll();
         FilePath = path;
         IsDirty = false;
         StateChanged?.Invoke(this);
@@ -292,6 +416,25 @@ public partial class QueryTab : UserControl
         _conn = null;
         if (conn != null)
             _ = Task.Run(async () => { try { await conn.DisposeAsync(); } catch { } });
+    }
+
+    /// <summary>
+    /// Pasa la pestaña a otra conexión (y base): el texto se conserva y la próxima ejecución va contra ella.
+    /// Sirve para cuando se abrió la consulta en la conexión equivocada.
+    /// </summary>
+    public async Task ChangeConnectionAsync(ConnectionProfile profile, string? database)
+    {
+        if (IsRunning) return;
+        var previous = _conn;
+        _conn = null;
+        if (previous != null)
+        {
+            try { await previous.DisposeAsync(); } catch { }
+        }
+        Profile = profile;
+        CurrentDatabase = database;
+        StatusText = $"Pestaña cambiada a {profile.Name}.";
+        StateChanged?.Invoke(this);
     }
 
     public async Task ChangeDatabaseAsync(string database)
@@ -437,6 +580,8 @@ public partial class QueryTab : UserControl
         ResultTabs.SelectedIndex = results.Count > 0 && !failed ? GridTab : MessagesTab;
 
         CurrentDatabase = database;
+        // Si cambió la estructura, el autocompletado vuelve a leer tablas y columnas.
+        if (statements.Any(s => StructureChange.IsMatch(s.Text))) SchemaCache.Invalidate(Profile);
         IsRunning = false;
         StatusText = cancelled ? "Consulta cancelada."
             : failed ? "Consulta finalizada con errores."
@@ -527,6 +672,7 @@ public partial class QueryTab : UserControl
         StateChanged?.Invoke(this);
     }
 
+    private static readonly Regex StructureChange = new(@"^\s*(CREATE|ALTER|DROP|RENAME)\b", RegexOptions.IgnoreCase);
     private static readonly Regex Explainable = new(@"^\s*\(*\s*(SELECT|WITH|INSERT|UPDATE|DELETE|REPLACE|TABLE|VALUES)\b", RegexOptions.IgnoreCase);
     private static readonly Regex AlreadyExplain = new(@"^\s*(EXPLAIN|DESCRIBE|DESC)\b", RegexOptions.IgnoreCase);
     private static readonly Regex UseStatement = new(@"^\s*USE\b", RegexOptions.IgnoreCase);
@@ -671,7 +817,7 @@ public partial class QueryTab : UserControl
             for (int i = 0; i < columns.Length; i++)
                 columns[i] = reader.GetName(i);
 
-            var result = new ResultSet { Columns = columns };
+            var result = new ResultSet { Columns = columns, SourceTable = SingleSourceTable(reader) };
             while (await reader.ReadAsync(token))
             {
                 if (result.Rows.Count >= MaxRows)
@@ -702,6 +848,20 @@ public partial class QueryTab : UserControl
     private static string Seconds(Stopwatch watch) =>
         watch.Elapsed.TotalSeconds.ToString("0.000", CultureInfo.InvariantCulture) + " s";
 
+    /// <summary>Si todas las columnas del resultado vienen de la misma tabla, su nombre; si no (JOIN, cálculos), null.</summary>
+    private static string? SingleSourceTable(DbDataReader reader)
+    {
+        try
+        {
+            var tables = reader.GetColumnSchema().Select(c => c.BaseTableName).Distinct().ToList();
+            return tables.Count == 1 && !string.IsNullOrEmpty(tables[0]) ? tables[0] : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static object? ReadValue(DbDataReader reader, int index)
     {
         try
@@ -716,9 +876,69 @@ public partial class QueryTab : UserControl
         }
     }
 
+    private readonly System.Windows.Threading.DispatcherTimer _filterTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
+
+    private void ResultFilter_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        ResultFilterHint.Visibility = ResultFilter.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Se espera a que termine de escribir: filtrar muchas filas en cada tecla sería lento.
+        _filterTimer.Stop();
+        _filterTimer.Start();
+    }
+
+    /// <summary>Muestra u oculta el cuadro de filtro de resultados. Al ocultarlo, se quita el filtro.</summary>
+    public void ToggleResultFilter()
+    {
+        if (ResultFilterBar.Visibility == Visibility.Visible)
+        {
+            ResultFilterBar.Visibility = Visibility.Collapsed;
+            ResultFilter.Text = "";
+            ApplyResultFilter();
+            return;
+        }
+        ResultFilterBar.Visibility = Visibility.Visible;
+        ResultTabs.SelectedIndex = GridTab;
+        Dispatcher.BeginInvoke(() => ResultFilter.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private void CloseResultFilter_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResultFilterBar.Visibility == Visibility.Visible) ToggleResultFilter();
+    }
+
+    private void ResultFilter_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        e.Handled = true;
+        ToggleResultFilter();
+    }
+
+    /// <summary>Muestra solo las filas con el texto del filtro en alguna columna (sin distinguir mayúsculas); NULL también cuenta.</summary>
+    private void ApplyResultFilter()
+    {
+        _filterTimer.Stop();
+        string filter = ResultFilter.Text.Trim();
+        int shown = 0, total = 0;
+        foreach (var grid in _grids)
+        {
+            var view = CollectionViewSource.GetDefaultView(grid.ItemsSource);
+            view.Filter = filter.Length == 0
+                ? null
+                : item => item is object?[] row && row.Any(v => CellText.Format(v).Contains(filter, StringComparison.OrdinalIgnoreCase));
+            shown += ((CollectionView)view).Count;
+            total += ((ICollection<object?[]>)grid.ItemsSource).Count;
+        }
+        FilterInfo.Text = filter.Length == 0 || _grids.Count == 0 ? "" : $"Mostrando {shown:N0} de {total:N0} filas";
+    }
+
     private void ShowResults(List<ResultSet> results)
     {
         _grids.Clear();
+        // Resultados nuevos: el filtro anterior ya no aplica.
+        _filterTimer.Stop();
+        ResultFilter.Text = "";
+        FilterInfo.Text = "";
+        ResultFilter.IsEnabled = results.Count > 0;
         SelectionStats = Array.Empty<SelectionStat>();
         if (results.Count == 0)
         {
@@ -788,11 +1008,6 @@ public partial class QueryTab : UserControl
             FontSize = AppSettings.Current.GridFontSize,
         };
         _grids.Add(grid);
-        grid.SetResourceReference(DataGrid.BackgroundProperty, "Brush.GridBackground");
-        grid.SetResourceReference(DataGrid.RowBackgroundProperty, "Brush.GridBackground");
-        grid.SetResourceReference(DataGrid.AlternatingRowBackgroundProperty, "Brush.GridAlternate");
-        grid.SetResourceReference(DataGrid.HorizontalGridLinesBrushProperty, "Brush.GridLines");
-        grid.SetResourceReference(DataGrid.VerticalGridLinesBrushProperty, "Brush.GridLines");
         VirtualizingPanel.SetVirtualizationMode(grid, VirtualizationMode.Recycling);
         ApplyCompactGridStyles(grid);
 
@@ -820,7 +1035,8 @@ public partial class QueryTab : UserControl
         }));
         menu.Items.Add(MenuItem("Seleccionar todo", grid.SelectAllCells));
         menu.Items.Add(new Separator());
-        menu.Items.Add(MenuItem("Guardar resultados como...", () => _ = ExportAsync(result)));
+        menu.Items.Add(MenuItem("Filtrar resultados (Ctrl+Mayús+L)", ToggleResultFilter));
+        menu.Items.Add(MenuItem("Guardar resultados como...", () => _ = ExportAsync(result, grid)));
         grid.ContextMenu = menu;
 
         grid.ItemsSource = result.Rows;
@@ -879,49 +1095,11 @@ public partial class QueryTab : UserControl
     private static SelectionStat Number(string label, double value) =>
         new(label, value.ToString("#,##0.####", CultureInfo.CurrentCulture), Math.Round(value, 10).ToString(CultureInfo.CurrentCulture));
 
-    /// <summary>
-    /// El tema Fluent da filas altas (unos 32 px) y fija su propio fondo, que anula el sombreado alterno.
-    /// Estos estilos heredan de los de Fluent: filas compactas y sombreado por índice de alternancia.
-    /// La cabecera de fila lleva plantilla propia: la de Fluent recorta los números de más de una cifra.
-    /// </summary>
+    /// <summary>Estilo compacto común y, propio de los resultados, el clic en el encabezado que selecciona la columna.</summary>
     private void ApplyCompactGridStyles(DataGrid grid)
     {
-        grid.MinRowHeight = 0;
-        grid.AlternationCount = 2;
-
-        var rowStyle = new Style(typeof(DataGridRow), TryFindResource(typeof(DataGridRow)) as Style);
-        rowStyle.Setters.Add(new Setter(MinHeightProperty, 0.0));
-        rowStyle.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("Brush.GridBackground")));
-        var alternate = new Trigger { Property = ItemsControl.AlternationIndexProperty, Value = 1 };
-        alternate.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("Brush.GridAlternate")));
-        rowStyle.Triggers.Add(alternate);
-        grid.RowStyle = rowStyle;
-
-        var cellStyle = new Style(typeof(DataGridCell), TryFindResource(typeof(DataGridCell)) as Style);
-        cellStyle.Setters.Add(new Setter(MinHeightProperty, 0.0));
-        cellStyle.Setters.Add(new Setter(PaddingProperty, new Thickness(4, 1, 4, 1)));
-        grid.CellStyle = cellStyle;
-
-        // Número de fila alineado a la derecha, sobre el mismo gris que las franjas de pestañas.
-        var border = new FrameworkElementFactory(typeof(Border));
-        border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(BackgroundProperty));
-        border.SetResourceReference(Border.BorderBrushProperty, "Brush.GridLines");
-        border.SetValue(Border.BorderThicknessProperty, new Thickness(0, 0, 1, 1));
-        var number = new FrameworkElementFactory(typeof(ContentPresenter));
-        number.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Right);
-        number.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
-        number.SetValue(MarginProperty, new Thickness(4, 0, 6, 0));
-        border.AppendChild(number);
-
-        var rowHeaderStyle = new Style(typeof(DataGridRowHeader));
-        rowHeaderStyle.Setters.Add(new Setter(TemplateProperty, new ControlTemplate(typeof(DataGridRowHeader)) { VisualTree = border }));
-        rowHeaderStyle.Setters.Add(new Setter(BackgroundProperty, new DynamicResourceExtension("Brush.TabStrip")));
-        rowHeaderStyle.Setters.Add(new Setter(ForegroundProperty, new DynamicResourceExtension("Brush.SecondaryText")));
-        grid.RowHeaderStyle = rowHeaderStyle;
-
-        var columnHeaderStyle = new Style(typeof(DataGridColumnHeader), TryFindResource(typeof(DataGridColumnHeader)) as Style);
-        columnHeaderStyle.Setters.Add(new Setter(MinHeightProperty, 0.0));
-        columnHeaderStyle.Setters.Add(new Setter(PaddingProperty, new Thickness(6, 3, 6, 3)));
+        GridStyles.ApplyCompact(grid);
+        var columnHeaderStyle = new Style(typeof(DataGridColumnHeader), grid.ColumnHeaderStyle);
         columnHeaderStyle.Setters.Add(new EventSetter(ButtonBase.ClickEvent, new RoutedEventHandler((sender, _) =>
         {
             if (sender is DataGridColumnHeader { Column: { } column }) SelectColumns(grid, column);
@@ -1014,34 +1192,22 @@ public partial class QueryTab : UserControl
     }
 
     /// <summary>Guarda un resultado como .csv (comas) o .txt (tabuladores), con encabezados.</summary>
-    private async Task ExportAsync(ResultSet result)
+    /// <summary>Guarda las filas visibles de la cuadrícula (con su filtro y orden) en el formato elegido.</summary>
+    private async Task ExportAsync(ResultSet result, DataGrid grid)
     {
         var owner = Window.GetWindow(this)!;
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Filter = "CSV separado por comas (*.csv)|*.csv|Texto separado por tabuladores (*.txt)|*.txt",
-            FileName = "resultados",
-            DefaultExt = ".csv",
+            Filter = ResultExporter.DialogFilter,
+            FileName = result.SourceTable ?? "resultados",
+            DefaultExt = ".xlsx",
             AddExtension = true,
         };
         if (dialog.ShowDialog(owner) != true) return;
 
         string path = dialog.FileName;
-        bool csv = !Path.GetExtension(dialog.FileName).Equals(".txt", StringComparison.OrdinalIgnoreCase);
-        string separator = csv ? "," : "\t";
-
-        string Field(object? value)
-        {
-            if (csv)
-            {
-                if (value == null) return "";
-                string text = CellText.Format(value);
-                return text.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0 ? "\"" + text.Replace("\"", "\"\"") + "\"" : text;
-            }
-            return CellText.Format(value).Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
-        }
-
-        int total = result.Rows.Count;
+        var rows = CollectionViewSource.GetDefaultView(grid.ItemsSource).Cast<object?[]>().ToList();
+        int total = rows.Count;
         using var cts = new CancellationTokenSource();
         var token = cts.Token;
 
@@ -1058,21 +1224,7 @@ public partial class QueryTab : UserControl
 
         try
         {
-            await Task.Run(() =>
-            {
-                // Con BOM, para que Excel reconozca los acentos.
-                using var writer = new StreamWriter(path, false, new UTF8Encoding(true));
-                writer.WriteLine(string.Join(separator, result.Columns.Select(c => Field(c))));
-                for (int i = 0; i < total; i++)
-                {
-                    if (i % 2000 == 0)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        ((IProgress<int>)progress).Report(i);
-                    }
-                    writer.WriteLine(string.Join(separator, result.Rows[i].Select(Field)));
-                }
-            });
+            await Task.Run(() => ResultExporter.Export(path, result.Columns, rows, result.SourceTable, Profile.Kind, progress, token));
         }
         catch (OperationCanceledException)
         {

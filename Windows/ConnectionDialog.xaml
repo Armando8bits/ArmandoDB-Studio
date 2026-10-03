@@ -1,7 +1,7 @@
 ﻿<Window x:Class="MySmdb.ConnectionDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Conectar con la base de datos" Width="840" SizeToContent="Height"
+        Title="Conectar con la base de datos" Width="840" Height="630"
         WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
     <Window.Resources>
         <!-- BasedOn: sin él, estos estilos reemplazarían a los del tema Fluent (claro/oscuro). -->
@@ -59,7 +59,8 @@
                     </Button>
                 </UniformGrid>
                 <Grid>
-                    <ListBox x:Name="SavedList" MinHeight="300" MaxHeight="380" SelectionChanged="SavedList_SelectionChanged"
+                    <!-- Ocupa todo el alto disponible, anclada arriba: no cambia de sitio al elegir otra conexión. -->
+                    <ListBox x:Name="SavedList" VerticalAlignment="Stretch" SelectionChanged="SavedList_SelectionChanged"
                              MouseDoubleClick="SavedList_MouseDoubleClick" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -174,39 +175,95 @@
 
                 <Separator Margin="0,8"/>
 
-                <!-- Solo se muestran los campos del tipo elegido -->
-                <Grid x:Name="MySqlPanel">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+                <!-- Solo se muestran los campos del tipo elegido. En MySQL, el servidor y el túnel SSH van en
+                     pestañas para que la ventana no crezca; fuera quedan los datos comunes. -->
+                <StackPanel x:Name="MySqlPanel">
+                    <TabControl x:Name="ConnectionTabs" MinHeight="290">
+                        <TabItem Header="Servidor MySQL">
+                            <Grid Margin="6,8,6,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="104"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
 
-                    <Label Content="Servidor:"/>
-                    <DockPanel Grid.Column="1">
-                        <TextBox DockPanel.Dock="Right" x:Name="PortBox" Width="64" MaxLength="5" ToolTip="Puerto (3306 por defecto)"/>
-                        <Label DockPanel.Dock="Right" Content="Puerto:" Padding="10,0,6,0"/>
-                        <TextBox x:Name="HostBox" ToolTip="Nombre o dirección IP del servidor"/>
-                    </DockPanel>
+                                <Label Content="Servidor:"/>
+                                <DockPanel Grid.Column="1">
+                                    <TextBox DockPanel.Dock="Right" x:Name="PortBox" Width="100" MaxLength="5" ToolTip="Puerto (3306 por defecto)"/>
+                                    <Label DockPanel.Dock="Right" Content="Puerto:" Padding="10,0,6,0"/>
+                                    <TextBox x:Name="HostBox" ToolTip="Nombre o dirección IP del servidor"/>
+                                </DockPanel>
 
-                    <Label Grid.Row="1" Content="Usuario:"/>
-                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="UserBox"/>
+                                <Label Grid.Row="1" Content="Usuario:"/>
+                                <TextBox Grid.Row="1" Grid.Column="1" x:Name="UserBox"/>
 
-                    <Label Grid.Row="2" Content="Contraseña:"/>
-                    <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="PasswordBox" Margin="0,4"/>
+                                <Label Grid.Row="2" Content="Contraseña:"/>
+                                <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="PasswordBox" Margin="0,4"/>
 
-                    <CheckBox Grid.Row="3" Grid.Column="1" x:Name="RememberCheck" Content="Recordar contraseña" Margin="0,2,0,6"
-                              ToolTip="Se guarda cifrada para tu usuario de Windows"/>
+                                <Label Grid.Row="3" Content="Base de datos:"/>
+                                <TextBox Grid.Row="3" Grid.Column="1" x:Name="DatabaseBox" ToolTip="Opcional: base de datos inicial"/>
 
-                    <Label Grid.Row="4" Content="Base de datos:"/>
-                    <TextBox Grid.Row="4" Grid.Column="1" x:Name="DatabaseBox" ToolTip="Opcional: base de datos inicial"/>
-                </Grid>
+                                <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TunnelHint" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"
+                                           Foreground="{DynamicResource Brush.SecondaryText}"
+                                           Text="Túnel SSH activado: «Servidor» y «Puerto» son los de la base vistos desde el servidor SSH (normalmente 127.0.0.1 y 3306)."/>
+                            </Grid>
+                        </TabItem>
+
+                        <!-- La aplicación abre y cierra el túnel sola. -->
+                        <TabItem x:Name="SshTab" Header="Túnel SSH">
+                            <StackPanel Margin="6,8,6,6">
+                    <CheckBox x:Name="SshCheck" Content="Conectar mediante un túnel SSH" Margin="0,0,0,4"
+                              Checked="SshCheck_Changed" Unchecked="SshCheck_Changed"/>
+                    <Grid x:Name="SshPanel" IsEnabled="False">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="104"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Label Content="Servidor SSH:"/>
+                        <DockPanel Grid.Column="1">
+                            <TextBox DockPanel.Dock="Right" x:Name="SshPortBox" Width="100" MaxLength="5" ToolTip="Puerto SSH (22 por defecto)"/>
+                            <Label DockPanel.Dock="Right" Content="Puerto:" Padding="10,0,6,0"/>
+                            <TextBox x:Name="SshHostBox" ToolTip="Servidor al que se entra por SSH (la VM, el bastión...)"/>
+                        </DockPanel>
+
+                        <Label Grid.Row="1" Content="Usuario SSH:"/>
+                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="SshUserBox"/>
+
+                        <Label Grid.Row="2" Content="Contraseña SSH:"/>
+                        <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="SshPasswordBox" Margin="0,4"
+                                     ToolTip="Opcional si usas una clave privada"/>
+
+                        <Label Grid.Row="3" Content="Clave privada:"/>
+                        <DockPanel Grid.Row="3" Grid.Column="1">
+                            <Button DockPanel.Dock="Right" Content="Examinar..." Margin="6,4,0,4" Click="BrowseKey_Click"/>
+                            <TextBox x:Name="SshKeyBox" ToolTip="Opcional: archivo de clave privada en formato OpenSSH (id_rsa, id_ed25519...)"/>
+                        </DockPanel>
+
+                        <Label Grid.Row="4" Content="Frase de la clave:"/>
+                        <PasswordBox Grid.Row="4" Grid.Column="1" x:Name="SshPassphraseBox" Margin="0,4"
+                                     ToolTip="Solo si la clave privada está protegida con una frase"/>
+                    </Grid>
+                            </StackPanel>
+                        </TabItem>
+                    </TabControl>
+
+                    <CheckBox x:Name="RememberCheck" Content="Recordar contraseñas" Margin="0,8,0,0"
+                              ToolTip="Las contraseñas (base de datos y SSH) se guardan cifradas para tu usuario de Windows"/>
+                </StackPanel>
 
                 <Grid x:Name="SqlitePanel" Visibility="Collapsed">
                     <Grid.ColumnDefinitions>

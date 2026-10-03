@@ -2,12 +2,12 @@
 
 A lightning-fast, lightweight, and distraction-free database manager designed for developers who are tired of bloated GUIs, intrusive paywalls, and rigid keyboard shortcuts. 
 
-Built out of pure frustration with existing tools, this is a custom-tailored client that brings the comfortable execution dynamics of Microsoft SQL Server Management Studio (SSMS) directly to **MySQL** and **SQLite**.
+Built out of pure frustration with not finding a tool that fit, this is a custom-tailored client for **MySQL** and **SQLite**, with shortcuts and a workflow that will feel familiar to anyone coming from SQL Server Management Studio (SSMS).
 
 ---
 
 ## Why this exists?
-For over a year and a half, dealing with traditional lightweight managers (like HeidiSQL) meant dealing with outdated interfaces, while modern alternatives either bloated system resources or hid core features behind annoying paywalls and pop-ups. 
+For over a year and a half, I couldn't find a lightweight manager that matched the way I work: some interfaces felt dated to me, while other tools used more system resources than I wanted or kept core features behind paywalls and pop-ups.
 
 If you love hitting **`Ctrl + E`** to instantly execute your selected query (just like in SSMS) and want something blazing fast that doesn't consume half your RAM, this tool is for you.
 
@@ -23,12 +23,12 @@ If you love hitting **`Ctrl + E`** to instantly execute your selected query (jus
 
 Un gestor de bases de datos ultrarrápido, ligero y libre de distracciones, diseñado para desarrolladores cansados de interfaces pesadas, muros de pago molestos y atajos de teclado rígidos.
 
-Nacido de la pura frustración con las herramientas existentes, este es un cliente a medida que traslada la cómoda dinámica de ejecución de Microsoft SQL Server Management Studio (SSMS) directamente a **MySQL** y **SQLite**.
+Nacido de la pura frustración de no encontrar una herramienta a mi medida, este es un cliente para **MySQL** y **SQLite** con atajos y una forma de trabajo que resultarán familiares a quien venga de SQL Server Management Studio (SSMS).
 
 ---
 
 ## ¿Por qué existe esto?
-Durante más de año y medio, lidiar con gestores ligeros tradicionales (como HeidiSQL) significaba soportar interfaces anticuadas, mientras que las alternativas modernas consumían demasiados recursos o escondían funciones clave tras molestos avisos de pago y publicidad.
+Durante más de año y medio no encontré un gestor ligero que encajara con mi forma de trabajar: algunas interfaces me resultaban anticuadas, y otras herramientas consumían más recursos de los que quería o dejaban funciones clave tras avisos de pago y publicidad.
 
 Si te encanta presionar **`Ctrl + E`** para ejecutar al instante tu consulta seleccionada (exactamente igual que en SSMS) y buscas algo rapidísimo que no consuma media memoria RAM, esta herramienta es para ti.
 
@@ -39,6 +39,12 @@ Si te encanta presionar **`Ctrl + E`** para ejecutar al instante tu consulta sel
 - **Interfaz a medida:** Creado por un desarrollador para desarrolladores, enfocado 100% en la productividad y la velocidad.
 
 ---
+
+## Disclaimer / Aviso
+
+ArmandoDB Studio is an independent project. It is not affiliated with, sponsored by, or endorsed by Microsoft, Oracle, or the SQLite project. SQL Server Management Studio is a trademark of Microsoft Corporation; MySQL is a trademark of Oracle Corporation and/or its affiliates. These names are used only to describe compatibility and familiar behavior.
+
+ArmandoDB Studio es un proyecto independiente. No está afiliado a Microsoft, Oracle ni al proyecto SQLite, ni cuenta con su patrocinio o respaldo. SQL Server Management Studio es una marca de Microsoft Corporation; MySQL es una marca de Oracle Corporation y/o sus filiales. Estos nombres se usan únicamente para describir compatibilidad y un comportamiento familiar.
 
 ## License / Licencia
 

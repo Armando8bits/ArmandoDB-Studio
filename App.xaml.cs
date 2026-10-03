@@ -7,6 +7,9 @@ namespace MySmdb;
 public partial class App : Application
 {
     public const string Name = "ArmandoDB Studio";
+    public const string Author = "Roque A Ramírez";
+    /// <summary>Página del repositorio (sin el ".git" final, para que el enlace abra en el navegador).</summary>
+    public const string RepositoryUrl = "https://github.com/Armando8bits/ArmandoDB-Studio";
 
     private static string? _dataFolder;
 
@@ -42,6 +45,12 @@ public partial class App : Application
         base.OnStartup(e);
         // Antes de que se cree la ventana principal (StartupUri).
         Theme.Apply(Theme.Parse(AppSettings.Current.Theme));
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        SshTunnels.CloseAll();
+        base.OnExit(e);
     }
 
     private void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

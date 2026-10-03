@@ -1,5 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    Comandos habituales (desde la carpeta del proyecto, C:\miscreaciones\MySmdb):
+
+    Compilar (cierra antes la aplicación si está abierta; si no, el .exe queda bloqueado):
+        dotnet build -c Release
+
+    Ejecutar el .exe ya compilado:
+        .\bin\Release\net10.0-windows\ArmandoDBStudio.exe
+
+    Compilar y ejecutar en un solo paso:
+        dotnet run -c Release
+  -->
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
@@ -25,6 +38,7 @@
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="MySqlConnector" Version="2.6.2" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
   </ItemGroup>
 
 </Project>

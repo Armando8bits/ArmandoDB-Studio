@@ -98,7 +98,51 @@ public partial class ConnectionDialog : Window
         DatabaseBox.Text = p.Kind == DbKind.Sqlite ? "" : p.Database ?? "";
         RememberCheck.IsChecked = saved == null || p.ProtectedPassword != null;
         ProductionCheck.IsChecked = p.IsProduction;
+
+        _filling = true;
+        SshCheck.IsChecked = p.UseSsh;
+        _filling = false;
+        _forgetHostKey = false;
+        SshHostBox.Text = p.SshHost ?? "";
+        SshPortBox.Text = p.SshPort.ToString();
+        SshUserBox.Text = p.SshUser ?? "";
+        SshPasswordBox.Password = p.SshPassword;
+        SshKeyBox.Text = p.SshKeyFile ?? "";
+        SshPassphraseBox.Password = p.SshPassphrase;
+        ConnectionTabs.SelectedIndex = 0;
         UpdateTypePanels();
+    }
+
+    private bool _filling;
+    /// <summary>Desmarcar y volver a marcar el túnel olvida la huella guardada del servidor SSH (para aceptar una nueva).</summary>
+    private bool _forgetHostKey;
+
+    private void SshCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (SshPanel == null) return;   // durante la carga del XAML
+        if (!_filling) _forgetHostKey = true;
+        UpdateSshState();
+    }
+
+    /// <summary>Los campos del túnel solo se pueden editar con la casilla marcada; la pestaña indica si está activo.</summary>
+    private void UpdateSshState()
+    {
+        bool enabled = SshCheck.IsChecked == true;
+        SshPanel.IsEnabled = enabled;
+        SshTab.Header = enabled ? "Túnel SSH  ✔" : "Túnel SSH";
+        TunnelHint.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void BrowseKey_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Seleccionar la clave privada SSH",
+            Filter = "Todos los archivos (*.*)|*.*",
+            InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh"),
+        };
+        if (dialog.ShowDialog(this) == true)
+            SshKeyBox.Text = dialog.FileName;
     }
 
     private void TypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -113,6 +157,7 @@ public partial class ConnectionDialog : Window
     {
         MySqlPanel.Visibility = IsSqlite ? Visibility.Collapsed : Visibility.Visible;
         SqlitePanel.Visibility = IsSqlite ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSshState();
     }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
@@ -149,7 +194,11 @@ public partial class ConnectionDialog : Window
         ConnectionProfile? Invalid(string message, Control field)
         {
             SetStatus(message, false);
-            field.Focus();
+            // El campo puede estar en la otra pestaña (servidor / túnel SSH): se muestra antes de enfocarlo.
+            if (!IsSqlite)
+                ConnectionTabs.SelectedIndex = field == SshHostBox || field == SshPortBox || field == SshUserBox
+                    || field == SshPasswordBox || field == SshKeyBox ? 1 : 0;
+            Dispatcher.BeginInvoke(() => field.Focus(), System.Windows.Threading.DispatcherPriority.Input);
             return null;
         }
 
@@ -181,7 +230,7 @@ public partial class ConnectionDialog : Window
         if (string.IsNullOrWhiteSpace(UserBox.Text))
             return Invalid("Indica el usuario.", UserBox);
 
-        return new ConnectionProfile
+        var profile = new ConnectionProfile
         {
             Alias = alias,
             IsProduction = ProductionCheck.IsChecked == true,
@@ -191,6 +240,32 @@ public partial class ConnectionDialog : Window
             Password = PasswordBox.Password,
             Database = string.IsNullOrWhiteSpace(DatabaseBox.Text) ? null : DatabaseBox.Text.Trim(),
         };
+
+        if (SshCheck.IsChecked != true) return profile;
+
+        if (string.IsNullOrWhiteSpace(SshHostBox.Text))
+            return Invalid("Indica el servidor SSH.", SshHostBox);
+        if (!uint.TryParse(SshPortBox.Text.Trim(), out uint sshPort) || sshPort == 0 || sshPort > 65535)
+            return Invalid("El puerto SSH debe ser un número entre 1 y 65535.", SshPortBox);
+        if (string.IsNullOrWhiteSpace(SshUserBox.Text))
+            return Invalid("Indica el usuario SSH.", SshUserBox);
+        string keyFile = SshKeyBox.Text.Trim().Trim('"');
+        if (keyFile.Length > 0 && !File.Exists(keyFile))
+            return Invalid("No se encuentra el archivo de la clave privada.", SshKeyBox);
+        if (keyFile.Length == 0 && SshPasswordBox.Password.Length == 0)
+            return Invalid("Indica la contraseña SSH o una clave privada.", SshPasswordBox);
+
+        profile.UseSsh = true;
+        profile.SshHost = SshHostBox.Text.Trim();
+        profile.SshPort = sshPort;
+        profile.SshUser = SshUserBox.Text.Trim();
+        profile.SshPassword = SshPasswordBox.Password;
+        profile.SshKeyFile = keyFile.Length > 0 ? keyFile : null;
+        profile.SshPassphrase = SshPassphraseBox.Password;
+        // Se conserva la huella ya aceptada del mismo servidor SSH, salvo que se haya pedido olvidarla.
+        if (!_forgetHostKey && Selected is { UseSsh: true } saved && saved.SshHost == profile.SshHost && saved.SshPort == profile.SshPort)
+            profile.SshHostKey = saved.SshHostKey;
+        return profile;
     }
 
     /// <summary>Abre y cierra una conexión. Devuelve el mensaje de error, o null si funcionó.</summary>
@@ -198,7 +273,8 @@ public partial class ConnectionDialog : Window
     {
         try
         {
-            await using var conn = profile.CreateConnection(profile.Database);
+            // Fuera del hilo de la interfaz: abrir el túnel SSH puede tardar unos segundos.
+            await using var conn = await Task.Run(() => profile.CreateConnection(profile.Database));
             await conn.OpenAsync();
             if (profile.Kind == DbKind.Sqlite)
             {

@@ -35,16 +35,33 @@ public class ConnectionProfile
     /// <summary>Conexión de producción: se resalta en rojo y pide confirmar cualquier sentencia que modifique.</summary>
     public bool IsProduction { get; set; }
 
+    // ----- Túnel SSH (solo MySQL). Con túnel, Host y Port son los de la base vistos desde el servidor SSH. -----
+
+    public bool UseSsh { get; set; }
+    public string? SshHost { get; set; }
+    public uint SshPort { get; set; } = 22;
+    public string? SshUser { get; set; }
+    /// <summary>Archivo de clave privada (OpenSSH o PuTTY convertido a OpenSSH), opcional.</summary>
+    public string? SshKeyFile { get; set; }
+    /// <summary>Huella SHA-256 del servidor SSH aceptada en la primera conexión.</summary>
+    public string? SshHostKey { get; set; }
+    public string? ProtectedSshPassword { get; set; }
+    public string? ProtectedSshPassphrase { get; set; }
+    [JsonIgnore] public string SshPassword { get; set; } = "";
+    [JsonIgnore] public string SshPassphrase { get; set; } = "";
+
     [JsonIgnore]
     public string DefaultName => Kind == DbKind.Sqlite
         ? $"{Path.GetFileName(FilePath)} ({Path.GetDirectoryName(FilePath)})"
-        : $"{User}@{Host}:{Port}";
+        : UseSsh ? $"{User}@{Host}:{Port} vía {SshHost}" : $"{User}@{Host}:{Port}";
 
     [JsonIgnore] public string Name => string.IsNullOrWhiteSpace(Alias) ? DefaultName : Alias;
 
     /// <summary>Línea de detalle para la lista de conexiones guardadas.</summary>
     [JsonIgnore]
-    public string Summary => Kind == DbKind.Sqlite ? $"SQLite · {FilePath}" : $"MySQL · {User}@{Host}:{Port}";
+    public string Summary => Kind == DbKind.Sqlite
+        ? $"SQLite · {FilePath}"
+        : $"MySQL · {User}@{Host}:{Port}" + (UseSsh ? $" · SSH {SshUser}@{SshHost}" : "");
 
     public override string ToString() => Name;
 
@@ -57,10 +74,11 @@ public class ConnectionProfile
             return new SqliteConnection(sqlite.ConnectionString);
         }
 
+        // Con túnel, se conecta al extremo local del túnel (lo abre si hace falta).
         var builder = new MySqlConnectionStringBuilder
         {
-            Server = Host,
-            Port = Port,
+            Server = UseSsh ? "127.0.0.1" : Host,
+            Port = UseSsh ? SshTunnels.LocalPort(this) : Port,
             UserID = User,
             Password = Password,
             Database = database ?? "",
@@ -90,7 +108,11 @@ public static class ProfileStore
             if (!File.Exists(FilePath)) return new();
             var list = JsonSerializer.Deserialize<List<ConnectionProfile>>(File.ReadAllText(FilePath)) ?? new List<ConnectionProfile>();
             foreach (var p in list)
+            {
                 p.Password = Unprotect(p.ProtectedPassword);
+                p.SshPassword = Unprotect(p.ProtectedSshPassword);
+                p.SshPassphrase = Unprotect(p.ProtectedSshPassphrase);
+            }
             return list;
         }
         catch
@@ -109,6 +131,8 @@ public static class ProfileStore
             || (replaces != null && p.Name.Equals(replaces, StringComparison.OrdinalIgnoreCase))
             || (string.IsNullOrWhiteSpace(p.Alias) && p.DefaultName.Equals(profile.DefaultName, StringComparison.OrdinalIgnoreCase)));
         profile.ProtectedPassword = rememberPassword ? Protect(profile.Password) : null;
+        profile.ProtectedSshPassword = rememberPassword && profile.SshPassword.Length > 0 ? Protect(profile.SshPassword) : null;
+        profile.ProtectedSshPassphrase = rememberPassword && profile.SshPassphrase.Length > 0 ? Protect(profile.SshPassphrase) : null;
         list.Insert(0, profile);
         Write(list);
     }
@@ -144,13 +168,29 @@ public static class ProfileStore
     }
 }
 
+public enum SchemaObject { Table, View, Procedure, Function, Trigger, Index }
+
+public record ColumnInfo(string Name, string Type, bool PrimaryKey, bool Nullable, bool AutoIncrement)
+{
+    /// <summary>Texto del árbol: "nombre (tipo, PK, null)".</summary>
+    public override string ToString() =>
+        $"{Name} ({(Type.Length == 0 ? "sin tipo" : Type)}{(PrimaryKey ? ", PK" : "")}{(Nullable ? ", null" : ", not null")})";
+}
+
+public record IndexInfo(string Name, bool Unique, bool Primary, string Columns)
+{
+    /// <summary>Texto del árbol: "nombre (col1, col2) único".</summary>
+    public override string ToString() => $"{Name} ({Columns}){(Primary ? " clave primaria" : Unique ? " único" : "")}";
+}
+
 /// <summary>Consultas auxiliares del explorador de objetos; aquí vive lo que cambia entre MySQL y SQLite.</summary>
 public static class Db
 {
     /// <summary>Consulta auxiliar en una conexión de corta duración.</summary>
     public static async Task<List<string?[]>> QueryAsync(ConnectionProfile profile, string? database, string sql, params string[] args)
     {
-        await using var conn = profile.CreateConnection(database);
+        // Fuera del hilo de la interfaz: abrir un túnel SSH puede tardar unos segundos.
+        await using var conn = await Task.Run(() => profile.CreateConnection(database));
         await conn.OpenAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
@@ -191,34 +231,105 @@ public static class Db
         return rows.Select(r => (r[0]!, string.Equals(r[1], "VIEW", StringComparison.OrdinalIgnoreCase))).ToList();
     }
 
-    /// <summary>Columnas ya formateadas para el árbol: "nombre (tipo, PK, null)".</summary>
-    public static async Task<List<string>> ListColumnsAsync(ConnectionProfile profile, string database, string table)
+    public static async Task<List<ColumnInfo>> GetColumnsAsync(ConnectionProfile profile, string database, string table)
     {
         if (profile.Kind == DbKind.Sqlite)
         {
             var info = await QueryAsync(profile, null, "SELECT name, type, \"notnull\", pk FROM pragma_table_info(@p0)", table);
-            return info.Select(r => Describe(r[0], r[1], r[3] != "0", r[2] != "1")).ToList();
+            // Una única PK de tipo INTEGER es el rowid: se autonumera.
+            bool singleIntegerKey = info.Count(r => r[3] != "0") == 1;
+            return info.Select(r =>
+            {
+                bool rowid = singleIntegerKey && r[3] != "0" && string.Equals(r[1], "INTEGER", StringComparison.OrdinalIgnoreCase);
+                // El rowid nunca es NULL aunque la tabla no lo declare NOT NULL.
+                return new ColumnInfo(r[0]!, r[1] ?? "", r[3] != "0", r[2] != "1" && !rowid, rowid);
+            }).ToList();
         }
 
         var rows = await QueryAsync(profile, null,
-            "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY FROM information_schema.COLUMNS " +
+            "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, EXTRA FROM information_schema.COLUMNS " +
             "WHERE TABLE_SCHEMA = @p0 AND TABLE_NAME = @p1 ORDER BY ORDINAL_POSITION", database, table);
-        return rows.Select(r => Describe(r[0], r[1], r[3] == "PRI", r[2] == "YES")).ToList();
+        return rows.Select(r => new ColumnInfo(r[0]!, r[1] ?? "", r[3] == "PRI", r[2] == "YES",
+            (r[4] ?? "").Contains("auto_increment", StringComparison.OrdinalIgnoreCase))).ToList();
     }
 
-    private static string Describe(string? name, string? type, bool primaryKey, bool nullable) =>
-        $"{name} ({(string.IsNullOrEmpty(type) ? "sin tipo" : type)}{(primaryKey ? ", PK" : "")}{(nullable ? ", null" : ", not null")})";
-
-    public static async Task<string> GetCreateScriptAsync(ConnectionProfile profile, string database, string name, bool isView)
+    /// <summary>Procedimientos y funciones almacenados (SQLite no tiene).</summary>
+    public static async Task<List<(string Name, bool IsFunction)>> ListRoutinesAsync(ConnectionProfile profile, string database)
     {
+        if (profile.Kind == DbKind.Sqlite) return new();
+        var rows = await QueryAsync(profile, null,
+            "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = @p0 ORDER BY ROUTINE_NAME", database);
+        return rows.Select(r => (r[0]!, r[1] == "FUNCTION")).ToList();
+    }
+
+    public static async Task<List<(string Name, string Table)>> ListTriggersAsync(ConnectionProfile profile, string database)
+    {
+        var rows = profile.Kind == DbKind.Sqlite
+            ? await QueryAsync(profile, null, "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
+            : await QueryAsync(profile, null,
+                "SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = @p0 ORDER BY TRIGGER_NAME", database);
+        return rows.Select(r => (r[0]!, r[1] ?? "")).ToList();
+    }
+
+    public static async Task<List<IndexInfo>> ListIndexesAsync(ConnectionProfile profile, string database, string table)
+    {
+        if (profile.Kind == DbKind.Sqlite)
+        {
+            var info = await QueryAsync(profile, null,
+                "SELECT il.name, il.\"unique\", il.origin, (SELECT group_concat(ii.name, ', ') FROM pragma_index_info(il.name) ii) " +
+                "FROM pragma_index_list(@p0) il ORDER BY il.name", table);
+            return info.Select(r => new IndexInfo(r[0]!, r[1] == "1", r[2] == "pk", r[3] ?? "")).ToList();
+        }
+
+        var rows = await QueryAsync(profile, null,
+            "SELECT INDEX_NAME, MIN(NON_UNIQUE), GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', ') " +
+            "FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = @p0 AND TABLE_NAME = @p1 " +
+            "GROUP BY INDEX_NAME ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME", database, table);
+        return rows.Select(r => new IndexInfo(r[0]!, r[1] == "0", r[0] == "PRIMARY", r[2] ?? "")).ToList();
+    }
+
+    /// <summary>Script CREATE de cualquier objeto. Rutinas y triggers van entre DELIMITER para poder volver a ejecutarlos.</summary>
+    public static async Task<string> GetCreateScriptAsync(ConnectionProfile profile, string database, SchemaObject kind, string name, string? table = null)
+    {
+        string full = $"{QuoteId(database)}.{QuoteId(name)}";
+
+        if (kind == SchemaObject.Index)
+        {
+            if (profile.Kind == DbKind.Sqlite)
+            {
+                var sql = await QueryAsync(profile, null, "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = @p0", name);
+                if (sql.Count > 0 && sql[0][0] != null) return sql[0][0] + ";";
+            }
+            var index = (await ListIndexesAsync(profile, database, table!)).FirstOrDefault(i => i.Name == name)
+                ?? throw new InvalidOperationException($"No se encontró el índice {name}.");
+            string columns = string.Join(", ", index.Columns.Split(", ").Select(QuoteId));
+            string target = $"{QuoteId(database)}.{QuoteId(table!)}";
+            if (index.Primary) return $"ALTER TABLE {target} ADD PRIMARY KEY ({columns});";
+            if (profile.Kind == DbKind.Sqlite)
+                return $"-- Índice creado automáticamente por una restricción UNIQUE; equivale a:\nCREATE UNIQUE INDEX {QuoteId(name)} ON {target} ({columns});";
+            return $"CREATE {(index.Unique ? "UNIQUE " : "")}INDEX {QuoteId(name)} ON {target} ({columns});";
+        }
+
         if (profile.Kind == DbKind.Sqlite)
         {
             var rows = await QueryAsync(profile, null, "SELECT sql FROM sqlite_master WHERE name = @p0", name);
             return rows[0][0] + ";";
         }
 
-        var result = await QueryAsync(profile, database, $"SHOW CREATE {(isView ? "VIEW" : "TABLE")} {QuoteId(database)}.{QuoteId(name)}");
-        return result[0][1] + ";";
+        switch (kind)
+        {
+            case SchemaObject.Table:
+            case SchemaObject.View:
+                var result = await QueryAsync(profile, database, $"SHOW CREATE {(kind == SchemaObject.View ? "VIEW" : "TABLE")} {full}");
+                return result[0][1] + ";";
+
+            default:
+                string keyword = kind switch { SchemaObject.Procedure => "PROCEDURE", SchemaObject.Function => "FUNCTION", _ => "TRIGGER" };
+                var routine = await QueryAsync(profile, database, $"SHOW CREATE {keyword} {full}");
+                string body = routine[0][2]
+                    ?? throw new InvalidOperationException("El servidor no devolvió la definición: hace falta ser su propietario o tener privilegios sobre ella.");
+                return $"DELIMITER $$\n{body}$$\nDELIMITER ;";
+        }
     }
 
     public static int ErrorCode(DbException ex) => ex switch
