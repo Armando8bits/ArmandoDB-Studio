@@ -1,7 +1,7 @@
 <Window x:Class="MySmdb.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ArmandoDB Studio" Width="1280" Height="800" WindowStartupLocation="CenterScreen" WindowState="Maximized"
+        Title="ArmandoDB Studio" Icon="pack://application:,,,/app.ico" Width="1280" Height="800" WindowStartupLocation="CenterScreen" WindowState="Maximized"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown">
     <DockPanel>
         <Menu DockPanel.Dock="Top">

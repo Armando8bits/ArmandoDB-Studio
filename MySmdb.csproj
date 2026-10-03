@@ -12,7 +12,14 @@
     <AssemblyTitle>ArmandoDB Studio</AssemblyTitle>
     <Company>ArmandoDB Studio</Company>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Icono del .exe (Explorador, barra de tareas, accesos directos). -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- El mismo icono, para la barra de título de las ventanas. -->
+    <Resource Include="app.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
