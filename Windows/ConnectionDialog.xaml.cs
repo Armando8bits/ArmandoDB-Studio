@@ -25,9 +25,10 @@ public partial class ConnectionDialog : Window
         };
     }
 
-    // Orden del desplegable de tipo: MySQL, SQLite, SQL Server.
+    // Orden del desplegable de tipo: MySQL, SQLite, SQL Server, Sybase ASE.
     private bool IsSqlite => TypeCombo.SelectedIndex == 1;
     private bool IsSqlServer => TypeCombo.SelectedIndex == 2;
+    private bool IsSybase => TypeCombo.SelectedIndex == 3;
 
     private ConnectionProfile? Selected => SavedList.SelectedItem as ConnectionProfile;
 
@@ -92,7 +93,7 @@ public partial class ConnectionDialog : Window
 
         NameBox.Text = p.Alias ?? "";
         _filling = true;
-        TypeCombo.SelectedIndex = p.Kind switch { DbKind.Sqlite => 1, DbKind.SqlServer => 2, _ => 0 };
+        TypeCombo.SelectedIndex = p.Kind switch { DbKind.Sqlite => 1, DbKind.SqlServer => 2, DbKind.Sybase => 3, _ => 0 };
         WindowsAuthCheck.IsChecked = p.IntegratedSecurity;
         _filling = false;
         FileBox.Text = p.FilePath ?? "";
@@ -157,9 +158,9 @@ public partial class ConnectionDialog : Window
         if (!_filling)
         {
             // Al cambiar de motor a mano, el puerto y el usuario por defecto pasan a los del nuevo (si no se tocaron).
-            var (port, otherPort, user, otherUser) = IsSqlServer ? ("1433", "3306", "sa", "root") : ("3306", "1433", "root", "sa");
-            if (PortBox.Text.Trim() == otherPort) PortBox.Text = port;
-            if (UserBox.Text.Trim() == otherUser) UserBox.Text = user;
+            var (port, user) = IsSqlServer ? ("1433", "sa") : IsSybase ? ("5000", "sa") : ("3306", "root");
+            if (PortBox.Text.Trim() is "3306" or "1433" or "5000") PortBox.Text = port;
+            if (UserBox.Text.Trim() is "root" or "sa") UserBox.Text = user;
         }
         UpdateTypePanels();
         SetStatus("", null);
@@ -176,7 +177,7 @@ public partial class ConnectionDialog : Window
         MySqlPanel.Visibility = IsSqlite ? Visibility.Collapsed : Visibility.Visible;
         SqlitePanel.Visibility = IsSqlite ? Visibility.Visible : Visibility.Collapsed;
 
-        ServerTab.Header = IsSqlServer ? "Servidor SQL Server" : "Servidor MySQL";
+        ServerTab.Header = IsSqlServer ? "Servidor SQL Server" : IsSybase ? "Servidor Sybase ASE" : "Servidor MySQL";
         WindowsAuthCheck.Visibility = IsSqlServer ? Visibility.Visible : Visibility.Collapsed;
         // Con autenticación de Windows no hay usuario ni contraseña que escribir.
         UserBox.IsEnabled = PasswordBox.IsEnabled = !(IsSqlServer && WindowsAuthCheck.IsChecked == true);
@@ -259,7 +260,7 @@ public partial class ConnectionDialog : Window
 
         var profile = new ConnectionProfile
         {
-            Kind = IsSqlServer ? DbKind.SqlServer : DbKind.MySql,
+            Kind = IsSqlServer ? DbKind.SqlServer : IsSybase ? DbKind.Sybase : DbKind.MySql,
             IntegratedSecurity = windowsAuth,
             Alias = alias,
             IsProduction = ProductionCheck.IsChecked == true,

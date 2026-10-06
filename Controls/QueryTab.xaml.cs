@@ -489,7 +489,7 @@ public partial class QueryTab : UserControl
         if (statements.Count > 0) return (statements, lineOffset);
 
         emptyMessageView.Text = "No hay ninguna sentencia que ejecutar: el texto está vacío o solo contiene comentarios.\n"
-            + Profile.Kind switch { DbKind.MySql => "En MySQL, '#' y '-- '", DbKind.SqlServer => "En SQL Server, '--'", _ => "En SQLite, '--'" }
+            + Profile.Kind switch { DbKind.MySql => "En MySQL, '#' y '-- '", DbKind.SqlServer => "En SQL Server, '--'", DbKind.Sybase => "En Sybase, '--'", _ => "En SQLite, '--'" }
             + " comentan el resto de la línea, y /* ... */ comenta un bloque.";
         ResultTabs.SelectedIndex = emptyMessageTab;
         return null;
@@ -502,8 +502,8 @@ public partial class QueryTab : UserControl
         var (statements, lineOffset) = script;
 
         var settings = AppSettings.Current;
-        // En SQL Server lo que se ejecuta son lotes; para revisarlos se miran sus sentencias una a una.
-        var toReview = Profile.Kind != DbKind.SqlServer ? statements
+        // En SQL Server y Sybase lo que se ejecuta son lotes; para revisarlos se miran sus sentencias una a una.
+        var toReview = !Db.IsTSql(Profile.Kind) ? statements
             : statements.SelectMany(batch => SqlSplitter.Split(batch.Text, mysql: false)
                 .Select(s => new SqlStatement(s.Text, batch.Line + s.Line - 1))).ToList();
         var warnings = SqlSafety.Review(toReview, lineOffset, Profile.IsProduction,
@@ -545,7 +545,7 @@ public partial class QueryTab : UserControl
                         {
                             await RunStatementAsync(statement.Text, results, log, token);
                         }
-                        catch (DbException ex) when (!token.IsCancellationRequested)
+                        catch (Exception ex) when (Db.IsDatabaseError(ex) && !token.IsCancellationRequested)
                         {
                             // En una sola línea: la vista de texto pinta en rojo las líneas que empiezan por "Error".
                             log.AppendLine($"Error {Db.ErrorCode(ex)}, línea {ErrorLine(ex, statement.Line + lineOffset)}: {ex.Message.ReplaceLineEndings(" ")}");
@@ -646,7 +646,7 @@ public partial class QueryTab : UserControl
                         output.AppendLine(text);
                         sections.Add(new PlanSection(header, root, root == null ? text : null, IsError: false));
                     }
-                    catch (DbException ex) when (!token.IsCancellationRequested)
+                    catch (Exception ex) when (Db.IsDatabaseError(ex) && !token.IsCancellationRequested)
                     {
                         string error = $"Error {Db.ErrorCode(ex)}, línea {line}: {ex.Message.ReplaceLineEndings(" ")}";
                         output.AppendLine(error);
@@ -707,6 +707,7 @@ public partial class QueryTab : UserControl
     private async Task<(string Text, PlanNode? Root)> PlanAsync(string sql, CancellationToken token)
     {
         if (Profile.Kind == DbKind.SqlServer) return await PlanSqlServerAsync(sql, token);
+        if (Profile.Kind == DbKind.Sybase) return await PlanSybaseAsync(sql, token);
 
         // Un USE previo cambia la base con la que se explican las siguientes sentencias, así que se aplica.
         if (UseStatement.IsMatch(sql))
@@ -780,6 +781,43 @@ public partial class QueryTab : UserControl
         if (text < 0 || plan.Rows.Count == 0) return ("(sin plan)", null);
         // StmtText ya viene sangrado como árbol ("  |--Clustered Index Scan(...)").
         return (string.Join(Environment.NewLine, plan.Rows.Select(r => CellText.Format(r[text]).ReplaceLineEndings(" "))), PlanParser.FromSqlServer(plan));
+    }
+
+    /// <summary>
+    /// Sybase ASE: con SET SHOWPLAN ON el servidor describe el plan en mensajes de texto, y con SET NOEXEC ON
+    /// compila el lote sin ejecutarlo. No hay una forma tabular, así que solo se muestra como texto.
+    /// </summary>
+    private async Task<(string Text, PlanNode? Root)> PlanSybaseAsync(string batch, CancellationToken token)
+    {
+        async Task RunAsync(string sql, CancellationToken cancel)
+        {
+            await using var cmd = _conn!.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.CommandTimeout = 0;
+            await using var reader = await cmd.ExecuteReaderAsync(cancel);
+            while (await reader.NextResultAsync(cancel)) { }
+        }
+
+        var plan = new StringBuilder();
+        var previous = _serverMessages;
+        // Cada opción va sola en su lote; NOEXEC al final, porque a partir de ahí ya no se ejecuta nada más que SET.
+        await RunAsync("set showplan on", token);
+        try
+        {
+            await RunAsync("set noexec on", token);
+            _serverMessages = plan;   // el plan llega como mensajes del servidor
+            await RunAsync(batch, token);
+        }
+        finally
+        {
+            _serverMessages = previous;
+            // Sin esto la sesión de la pestaña seguiría sin ejecutar nada.
+            try { await RunAsync("set noexec off", CancellationToken.None); } catch { }
+            try { await RunAsync("set showplan off", CancellationToken.None); } catch { }
+        }
+
+        string text = plan.ToString().TrimEnd();
+        return (text.Length > 0 ? text : "(el servidor no devolvió ningún plan)", null);
     }
 
     /// <summary>Texto y árbol de un resultado de EXPLAIN, sea cual sea su forma.</summary>
@@ -933,6 +971,8 @@ public partial class QueryTab : UserControl
         _conn = Profile.CreateConnection(CurrentDatabase);
         if (_conn is Microsoft.Data.SqlClient.SqlConnection sqlServer)
             sqlServer.InfoMessage += (_, e) => _serverMessages?.AppendLine(e.Message);
+        if (_conn is AdoNetCore.AseClient.AseConnection sybase)
+            sybase.InfoMessage += (_, e) => _serverMessages?.AppendLine((e.Message ?? "").TrimEnd('\r', '\n'));
         await _conn.OpenAsync(token);
     }
 
@@ -943,8 +983,12 @@ public partial class QueryTab : UserControl
     /// Línea del editor donde está el error. SQL Server indica la línea dentro del lote; los demás, nada:
     /// se usa la primera línea de la sentencia.
     /// </summary>
-    private static int ErrorLine(DbException ex, int statementLine) =>
-        ex is Microsoft.Data.SqlClient.SqlException { LineNumber: > 0 } sql ? statementLine + sql.LineNumber - 1 : statementLine;
+    private static int ErrorLine(Exception ex, int statementLine) => ex switch
+    {
+        Microsoft.Data.SqlClient.SqlException { LineNumber: > 0 } sql => statementLine + sql.LineNumber - 1,
+        AdoNetCore.AseClient.AseException { Errors.Count: > 0 } sybase when sybase.Errors[0].LineNum > 0 => statementLine + sybase.Errors[0].LineNum - 1,
+        _ => statementLine,
+    };
 
     private async Task<string?> ReadCurrentDatabaseAsync()
     {
@@ -953,8 +997,8 @@ public partial class QueryTab : UserControl
             // SQLite no cambia de base: siempre es "main".
             if (Profile.Kind == DbKind.Sqlite || _conn?.State != System.Data.ConnectionState.Open) return null;
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = Profile.Kind == DbKind.SqlServer ? "SELECT DB_NAME()" : "SELECT DATABASE()";
-            return await cmd.ExecuteScalarAsync() as string;
+            cmd.CommandText = Db.IsTSql(Profile.Kind) ? "SELECT DB_NAME()" : "SELECT DATABASE()";
+            return (await cmd.ExecuteScalarAsync() as string)?.Trim();
         }
         catch
         {

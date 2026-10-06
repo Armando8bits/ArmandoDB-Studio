@@ -61,7 +61,7 @@ public class AboutWindow : Window
         }
         text.Children.Add(repository);
         text.Children.Add(new TextBlock { Text = "Licencia: MIT", Margin = new Thickness(0, 2, 0, 0) });
-        text.Children.Add(Secondary("Usa AvalonEdit, MySqlConnector, Microsoft.Data.Sqlite, Microsoft.Data.SqlClient y SSH.NET.", top: 10));
+        text.Children.Add(Secondary("Usa AvalonEdit, MySqlConnector, Microsoft.Data.Sqlite, Microsoft.Data.SqlClient, AdoNetCore.AseClient y SSH.NET.", top: 10));
         text.Children.Add(Secondary(
             "Proyecto independiente: no está afiliado a Microsoft ni a Oracle, ni cuenta con su respaldo. " +
             "SQL Server Management Studio es una marca de Microsoft Corporation y MySQL, de Oracle Corporation.", top: 8));

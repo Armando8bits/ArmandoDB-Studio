@@ -313,6 +313,9 @@ public static class ResultExporter
     {
         null => "NULL",
         { } known when kind == DbKind.SqlServer && SqlServerLiteral(known) is { } literal => literal,
+        // Sybase ASE: binarios como 0x... y fechas con milisegundos como mucho (su datetime no guarda más).
+        byte[] bytes when kind == DbKind.Sybase => bytes.Length == 0 ? "NULL" : "0x" + Convert.ToHexString(bytes),
+        DateTime d when kind == DbKind.Sybase => "'" + d.ToString(d.Ticks % TimeSpan.TicksPerSecond == 0 ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture) + "'",
         bool b => b ? "1" : "0",
         byte or sbyte or short or ushort or int or uint or long or ulong or decimal => Convert.ToString(value, CultureInfo.InvariantCulture)!,
         float or double => double.IsFinite(Convert.ToDouble(value, CultureInfo.InvariantCulture))

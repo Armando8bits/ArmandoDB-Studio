@@ -4,13 +4,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AdoNetCore.AseClient;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using MySqlConnector;
 
 namespace MySmdb;
 
-public enum DbKind { MySql, Sqlite, SqlServer }
+/// <summary>Sybase es Sybase ASE (hoy SAP ASE), que comparte dialecto (Transact-SQL) con SQL Server.</summary>
+public enum DbKind { MySql, Sqlite, SqlServer, Sybase }
 
 public class ConnectionProfile
 {
@@ -77,7 +79,7 @@ public class ConnectionProfile
     [JsonIgnore]
     public string Summary => Kind == DbKind.Sqlite
         ? $"SQLite · {FilePath}"
-        : $"{(Kind == DbKind.SqlServer ? "SQL Server" : "MySQL")} · {ServerLabel}" + (UseSsh ? $" · SSH {SshUser}@{SshHost}" : "");
+        : $"{Kind switch { DbKind.SqlServer => "SQL Server", DbKind.Sybase => "Sybase ASE", _ => "MySQL" }} · {ServerLabel}" + (UseSsh ? $" · SSH {SshUser}@{SshHost}" : "");
 
     public override string ToString() => Name;
 
@@ -111,6 +113,25 @@ public class ConnectionProfile
                 sqlServer.Password = Password;
             }
             return new SqlConnection(sqlServer.ConnectionString);
+        }
+
+        if (Kind == DbKind.Sybase)
+        {
+            // El controlador no trae un generador de cadenas propio; el genérico se encarga de escapar los valores.
+            var sybase = new DbConnectionStringBuilder
+            {
+                ["Data Source"] = UseSsh ? "127.0.0.1" : Host,
+                ["Port"] = UseSsh ? SshTunnels.LocalPort(this) : Port,
+                ["Uid"] = User,
+                ["Pwd"] = Password,
+                // Cada pestaña es una sesión propia, como en SSMS.
+                ["Pooling"] = false,
+                ["ApplicationName"] = App.Name,
+                ["LoginTimeOut"] = 15,
+                // El controlador exige una base. Sin ninguna elegida, master: cualquier usuario puede entrar en ella.
+                ["Database"] = string.IsNullOrEmpty(database) ? "master" : database,
+            };
+            return new AseConnection(sybase.ConnectionString);
         }
 
         // Con túnel, se conecta al extremo local del túnel (lo abre si hace falta).
@@ -259,6 +280,7 @@ public static class Db
     public static async Task<List<string>> ListDatabasesAsync(ConnectionProfile profile)
     {
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListDatabasesAsync(profile);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.ListDatabasesAsync(profile);
         if (profile.Kind == DbKind.Sqlite)
             return (await QueryAsync(profile, null, "PRAGMA database_list")).Select(r => r[1]!).ToList();
         return (await QueryAsync(profile, null, "SHOW DATABASES")).Select(r => r[0]!).ToList();
@@ -267,6 +289,7 @@ public static class Db
     public static async Task<List<(string Name, bool IsView)>> ListTablesAsync(ConnectionProfile profile, string database)
     {
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListTablesAsync(profile, database);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.ListTablesAsync(profile, database);
         var rows = profile.Kind == DbKind.Sqlite
             ? await QueryAsync(profile, null,
                 "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -278,6 +301,7 @@ public static class Db
     public static async Task<List<ColumnInfo>> GetColumnsAsync(ConnectionProfile profile, string database, string table)
     {
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.GetColumnsAsync(profile, database, table);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.GetColumnsAsync(profile, database, table);
         if (profile.Kind == DbKind.Sqlite)
         {
             var info = await QueryAsync(profile, null, "SELECT name, type, \"notnull\", pk FROM pragma_table_info(@p0)", table);
@@ -303,6 +327,7 @@ public static class Db
     {
         if (profile.Kind == DbKind.Sqlite) return new();
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListRoutinesAsync(profile, database);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.ListRoutinesAsync(profile, database);
         var rows = await QueryAsync(profile, null,
             "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = @p0 ORDER BY ROUTINE_NAME", database);
         return rows.Select(r => (r[0]!, r[1] == "FUNCTION")).ToList();
@@ -311,6 +336,7 @@ public static class Db
     public static async Task<List<(string Name, string Table)>> ListTriggersAsync(ConnectionProfile profile, string database)
     {
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListTriggersAsync(profile, database);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.ListTriggersAsync(profile, database);
         var rows = profile.Kind == DbKind.Sqlite
             ? await QueryAsync(profile, null, "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
             : await QueryAsync(profile, null,
@@ -321,6 +347,7 @@ public static class Db
     public static async Task<List<IndexInfo>> ListIndexesAsync(ConnectionProfile profile, string database, string table)
     {
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListIndexesAsync(profile, database, table);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.ListIndexesAsync(profile, database, table);
         if (profile.Kind == DbKind.Sqlite)
         {
             var info = await QueryAsync(profile, null,
@@ -340,6 +367,7 @@ public static class Db
     public static async Task<List<(string Table, List<ColumnInfo> Columns)>> GetAllTablesAsync(ConnectionProfile profile, string database)
     {
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.GetAllTablesAsync(profile, database);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.GetAllTablesAsync(profile, database);
 
         var tables = new List<(string Table, List<ColumnInfo> Columns)>();
         void Add(string table, ColumnInfo column)
@@ -373,6 +401,7 @@ public static class Db
     public static async Task<List<ForeignKey>> ListForeignKeysAsync(ConnectionProfile profile, string database)
     {
         if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListForeignKeysAsync(profile, database);
+        if (profile.Kind == DbKind.Sybase) return await SybaseCatalog.ListForeignKeysAsync(profile, database);
         var rows = profile.Kind == DbKind.Sqlite
             ? await QueryAsync(profile, null,
                 "SELECT m.name, f.\"from\", f.\"table\", f.\"to\" FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f " +
@@ -388,6 +417,25 @@ public static class Db
     /// <summary>Script CREATE de cualquier objeto. Rutinas y triggers van entre DELIMITER para poder volver a ejecutarlos.</summary>
     public static async Task<string> GetCreateScriptAsync(ConnectionProfile profile, string database, SchemaObject kind, string name, string? table = null)
     {
+        if (profile.Kind == DbKind.Sybase)
+        {
+            switch (kind)
+            {
+                case SchemaObject.Table:
+                    return await SybaseCatalog.ScriptTableAsync(profile, database, name);
+                case SchemaObject.Index:
+                    var sybaseIndex = (await ListIndexesAsync(profile, database, table!)).FirstOrDefault(i => i.Name == name)
+                        ?? throw new InvalidOperationException($"No se encontró el índice {name}.");
+                    string sybaseKeys = string.Join(", ", sybaseIndex.Columns.Split(", ").Select(SybaseCatalog.Quote));
+                    string sybaseTable = SybaseCatalog.QuoteFull(table!);
+                    return (sybaseIndex.Primary
+                        ? $"ALTER TABLE {sybaseTable} ADD CONSTRAINT {SybaseCatalog.Quote(name)} PRIMARY KEY ({sybaseKeys})"
+                        : $"CREATE {(sybaseIndex.Unique ? "UNIQUE " : "")}INDEX {SybaseCatalog.Quote(name)} ON {sybaseTable} ({sybaseKeys})") + Environment.NewLine + "GO";
+                default:
+                    return await SybaseCatalog.GetDefinitionAsync(profile, database, name) + Environment.NewLine + "GO";
+            }
+        }
+
         if (profile.Kind == DbKind.SqlServer)
         {
             switch (kind)
@@ -449,21 +497,40 @@ public static class Db
         }
     }
 
-    public static int ErrorCode(DbException ex) => ex switch
+    /// <summary>
+    /// ¿Es un error devuelto por la base de datos (sentencia incorrecta, restricción...)? El controlador de Sybase
+    /// no deriva sus errores de DbException, así que no basta con capturar esa.
+    /// </summary>
+    public static bool IsDatabaseError(Exception ex) => ex is DbException or AseException;
+
+    public static int ErrorCode(Exception ex) => ex switch
     {
         MySqlException mysql => mysql.Number,
         SqlException sqlServer => sqlServer.Number,
         SqliteException sqlite => sqlite.SqliteErrorCode,
-        _ => ex.ErrorCode,
+        AseException { Errors.Count: > 0 } sybase => sybase.Errors[0].MessageNumber,
+        DbException other => other.ErrorCode,
+        _ => 0,
     };
 
-    public static string Prompt(DbKind kind) => kind switch { DbKind.Sqlite => "sqlite> ", DbKind.SqlServer => "mssql> ", _ => "mysql> " };
+    /// <summary>
+    /// SQL Server y Sybase ASE comparten dialecto: el script va por lotes separados con GO, hay TOP en vez de LIMIT,
+    /// EXEC en vez de CALL, PRINT, USE y nombres "propietario.objeto".
+    /// </summary>
+    public static bool IsTSql(DbKind kind) => kind is DbKind.SqlServer or DbKind.Sybase;
+
+    public static string Prompt(DbKind kind) => kind switch { DbKind.Sqlite => "sqlite> ", DbKind.SqlServer => "mssql> ", DbKind.Sybase => "sybase> ", _ => "mysql> " };
 
     /// <summary>Los acentos graves valen en MySQL y SQLite los acepta por compatibilidad.</summary>
     public static string QuoteId(string name) => "`" + name.Replace("`", "``") + "`";
 
     /// <summary>Nombre de columna u otro identificador simple, con las comillas del motor: `nombre` o [nombre].</summary>
-    public static string QuoteId(DbKind kind, string name) => kind == DbKind.SqlServer ? SqlServerCatalog.Quote(name) : QuoteId(name);
+    public static string QuoteId(DbKind kind, string name) => kind switch
+    {
+        DbKind.SqlServer => SqlServerCatalog.Quote(name),
+        DbKind.Sybase => SybaseCatalog.Quote(name),
+        _ => QuoteId(name),
+    };
 
     /// <summary>
     /// Nombre de una tabla, vista o rutina para usarlo en una sentencia: `base`.`tabla` en MySQL, `tabla` en SQLite
@@ -472,10 +539,16 @@ public static class Db
     public static string FullName(ConnectionProfile profile, string? database, string name) => profile.Kind switch
     {
         DbKind.SqlServer => SqlServerCatalog.QuoteFull(name),
+        DbKind.Sybase => SybaseCatalog.QuoteFull(name),
         DbKind.Sqlite => QuoteId(name),
         _ => database == null ? QuoteId(name) : $"{QuoteId(database)}.{QuoteId(name)}",
     };
 
     /// <summary>Nombre de una tabla dentro de la base ya seleccionada (copias de seguridad): `tabla` o [esquema].[tabla].</summary>
-    public static string LocalName(DbKind kind, string name) => kind == DbKind.SqlServer ? SqlServerCatalog.QuoteFull(name) : QuoteId(name);
+    public static string LocalName(DbKind kind, string name) => kind switch
+    {
+        DbKind.SqlServer => SqlServerCatalog.QuoteFull(name),
+        DbKind.Sybase => SybaseCatalog.QuoteFull(name),
+        _ => QuoteId(name),
+    };
 }

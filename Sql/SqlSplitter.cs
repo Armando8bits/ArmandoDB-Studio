@@ -16,7 +16,7 @@ public static class SqlSplitter
 
     /// <summary>Divide el script según el motor: sentencias (MySQL, SQLite) o lotes separados por GO (SQL Server).</summary>
     public static List<SqlStatement> Split(string sql, DbKind kind) =>
-        kind == DbKind.SqlServer ? SplitBatches(sql) : Split(sql, mysql: kind == DbKind.MySql);
+        Db.IsTSql(kind) ? SplitBatches(sql) : Split(sql, mysql: kind == DbKind.MySql);
 
     private static readonly Regex GoLine = new(@"^\s*GO(?:\s+(\d+))?\s*(?:--.*)?$", RegexOptions.IgnoreCase);
     private static readonly Regex Comments = new(@"--[^\n]*|/\*.*?\*/", RegexOptions.Singleline);

@@ -167,6 +167,7 @@
                             <ComboBoxItem Content="MySQL"/>
                             <ComboBoxItem Content="SQLite"/>
                             <ComboBoxItem Content="SQL Server"/>
+                            <ComboBoxItem Content="Sybase ASE"/>
                         </ComboBox>
                         <CheckBox x:Name="ProductionCheck" Content="Producción" Margin="20,0,0,0" VerticalAlignment="Center"
                                   Foreground="{DynamicResource Brush.ProdText}" FontWeight="SemiBold"
@@ -197,7 +198,7 @@
 
                                 <Label Content="Servidor:"/>
                                 <DockPanel Grid.Column="1">
-                                    <TextBox DockPanel.Dock="Right" x:Name="PortBox" Width="100" MaxLength="5" ToolTip="Puerto (3306 en MySQL, 1433 en SQL Server)"/>
+                                    <TextBox DockPanel.Dock="Right" x:Name="PortBox" Width="100" MaxLength="5" ToolTip="Puerto (3306 en MySQL, 1433 en SQL Server, 5000 en Sybase ASE)"/>
                                     <Label DockPanel.Dock="Right" Content="Puerto:" Padding="10,0,6,0"/>
                                     <TextBox x:Name="HostBox" ToolTip="Nombre o dirección IP del servidor"/>
                                 </DockPanel>

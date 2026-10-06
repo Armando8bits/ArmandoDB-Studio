@@ -9,7 +9,7 @@ public static class ScriptTemplates
     private static string Placeholder(ColumnInfo column) => $"<{column.Name}: {(column.Type.Length == 0 ? "valor" : column.Type)}>";
 
     /// <summary>Las primeras 1000 filas: TOP en SQL Server, LIMIT en MySQL y SQLite.</summary>
-    public static string SelectTop(DbKind kind, string fullName, string columns = "*") => kind == DbKind.SqlServer
+    public static string SelectTop(DbKind kind, string fullName, string columns = "*") => Db.IsTSql(kind)
         ? $"SELECT TOP 1000 {columns}\nFROM {fullName};\n"
         : $"SELECT {columns}\nFROM {fullName}\nLIMIT 1000;\n";
 

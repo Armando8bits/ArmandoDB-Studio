@@ -57,10 +57,13 @@ public static class SchemaCache
     private static async Task<SchemaInfo> LoadAsync(ConnectionProfile profile, string database)
     {
         var schema = new SchemaInfo { Kind = profile.Kind };
-        if (profile.Kind == DbKind.SqlServer)
+        if (Db.IsTSql(profile.Kind))
         {
             // Las tablas se buscan por su nombre sin esquema, que es como se suelen escribir (o tras "dbo.").
-            foreach (var row in await SqlServerCatalog.GetCompletionRowsAsync(profile, database))
+            var catalog = profile.Kind == DbKind.Sybase
+                ? await SybaseCatalog.GetCompletionRowsAsync(profile, database)
+                : await SqlServerCatalog.GetCompletionRowsAsync(profile, database);
+            foreach (var row in catalog)
             {
                 if (!schema.Tables.TryGetValue(row[1]!, out var list))
                 {

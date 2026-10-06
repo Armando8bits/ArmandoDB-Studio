@@ -33,6 +33,9 @@ public static class Snippets
                 // SQL Server no tiene LIMIT ni AUTO_INCREMENT: TOP e IDENTITY.
                 DbKind.SqlServer => template.Replace("SELECT *\nFROM |\nLIMIT 100;", "SELECT TOP 100 *\nFROM |;")
                     .Replace("INT PRIMARY KEY AUTO_INCREMENT", "INT IDENTITY(1,1) PRIMARY KEY"),
+                // Sybase ASE: como SQL Server, pero IDENTITY va sin semilla ni incremento y sobre un numeric.
+                DbKind.Sybase => template.Replace("SELECT *\nFROM |\nLIMIT 100;", "SELECT TOP 100 *\nFROM |;")
+                    .Replace("INT PRIMARY KEY AUTO_INCREMENT", "NUMERIC(10,0) IDENTITY PRIMARY KEY"),
                 _ => template,
             };
         }

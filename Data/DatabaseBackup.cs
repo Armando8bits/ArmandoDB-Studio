@@ -29,6 +29,7 @@ public static class DatabaseBackup
         IProgress<BackupProgress> progress, CancellationToken token)
     {
         if (profile.Kind == DbKind.SqlServer) return await ExportSqlServerAsync(profile, database, options, path, progress, token);
+        if (profile.Kind == DbKind.Sybase) throw new NotSupportedException("La copia de seguridad todavía no está disponible para Sybase ASE.");
 
         bool mysql = profile.Kind == DbKind.MySql;
         long rows = 0;

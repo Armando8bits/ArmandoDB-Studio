@@ -1400,8 +1400,12 @@ public partial class MainWindow : Window
                 if (node.Kind == NodeKind.Database)
                 {
                     Add("Ver diagrama", () => new DiagramWindow(node.Profile, node.Database!, Icon).Show());
-                    Add("Copia de seguridad (.sql)...", () => _ = BackupAsync(node));
-                    Add("Restaurar desde .sql...", () => _ = RestoreAsync(item, node));
+                    // Sybase: todavía no (falta probar la generación del script contra un servidor real).
+                    if (node.Profile.Kind != DbKind.Sybase)
+                    {
+                        Add("Copia de seguridad (.sql)...", () => _ = BackupAsync(node));
+                        Add("Restaurar desde .sql...", () => _ = RestoreAsync(item, node));
+                    }
                 }
                 Add("Actualizar", () => _ = RefreshAsync(item, node));
                 menu.Items.Add(new Separator());
@@ -1442,7 +1446,7 @@ public partial class MainWindow : Window
                     AddScript("DELETE", columns => ScriptTemplates.Delete(dialect, fullName, columns));
                 }
                 menu.Items.Add(scriptAs);
-                if (node.Kind == NodeKind.Table)
+                if (node.Kind == NodeKind.Table && node.Profile.Kind != DbKind.Sybase)
                     Add("Importar datos (CSV, Excel)...", () => _ = ImportAsync(node));
                 Add("Actualizar", () => _ = RefreshAsync(item, node));
                 break;
@@ -1450,7 +1454,7 @@ public partial class MainWindow : Window
             case NodeKind.Procedure:
                 Add("Generar script CREATE", () => _ = ScriptCreateAsync(node));
                 // SQL Server ejecuta los procedimientos con EXEC; MySQL, con CALL.
-                bool exec = node.Profile.Kind == DbKind.SqlServer;
+                bool exec = Db.IsTSql(node.Profile.Kind);
                 Add(exec ? "Generar llamada (EXEC)" : "Generar llamada (CALL)", () =>
                     AddTab(node.Profile, node.Database).SetText(exec
                         ? $"EXEC {Db.FullName(node.Profile, node.Database, node.Name!)};\n"
