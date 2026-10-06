@@ -22,6 +22,7 @@ packages/
 
 # Publicación
 publish/
+installer/Output/
 *.pubxml.user
 
 # Pruebas y cobertura

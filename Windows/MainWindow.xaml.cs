@@ -54,6 +54,8 @@ public partial class MainWindow : Window
         /// <summary>Ventana flotante de la zona; null en la zona de la ventana principal.</summary>
         public Window? Window { get; init; }
         public StatusBarView? Status { get; init; }
+        /// <summary>Botón Cancelar de la ventana flotante: solo activo mientras su pestaña ejecuta algo.</summary>
+        public Button? CancelButton { get; set; }
     }
 
     private const string FileFilter = "Archivos SQL (*.sql)|*.sql|Todos los archivos (*.*)|*.*";
@@ -427,6 +429,25 @@ public partial class MainWindow : Window
     {
         if (SelectedProfile() is { } profile)
             Disconnect(profile);
+    }
+
+    /// <summary>Base seleccionada en el explorador (ella o cualquier objeto suyo) o, si no hay, la de la pestaña actual.</summary>
+    private (ConnectionProfile Profile, string Database)? SelectedDatabase()
+    {
+        for (var item = Explorer.SelectedItem as TreeViewItem; item != null; item = item.Parent as TreeViewItem)
+            if (item.Tag is Node { Database: { } database } node) return (node.Profile, database);
+        return Current is { CurrentDatabase: { Length: > 0 } current } tab ? (tab.Profile, current) : null;
+    }
+
+    private void Diagram_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedDatabase() is not { } target)
+        {
+            MessageBox.Show(this, "Selecciona una base de datos en el explorador (o abre una pestaña conectada a ella).",
+                "Diagrama de la base de datos", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        new DiagramWindow(target.Profile, target.Database, Icon).Show();
     }
 
     private void ProcessMonitor_Click(object sender, RoutedEventArgs e)
@@ -1081,6 +1102,8 @@ public partial class MainWindow : Window
         AddButton("▶ Ejecutar", "Ejecutar (Ctrl+E o F5)", () => _ = ExecuteCurrentAsync());
         AddButton("Plan", "Plan de ejecución (Ctrl+L)", () => _ = Current?.ExplainAsync());
         AddButton("■ Cancelar", "Cancelar la ejecución (Alt+Pausa)", () => Current?.Cancel());
+        area.CancelButton = (Button)bar.Children[^1];
+        area.CancelButton.IsEnabled = false;
         AddButton("Dividir ◧", "Dividir esta ventana: izquierda / derecha", () => Split(sideBySide: true));
         AddButton("Dividir ⬒", "Dividir esta ventana: arriba / abajo", () => Split(sideBySide: false));
         AddButton("Quitar división", "Volver a un solo grupo de pestañas en esta ventana", Unsplit);
@@ -1214,6 +1237,7 @@ public partial class MainWindow : Window
             var tab = VisibleTab(area);
             area.Window.Title = tab != null ? $"{tab.Title} - {TargetLabel(tab)} - {App.Name}" : App.Name;
             area.Status.Update(tab, "Listo");
+            if (area.CancelButton != null) area.CancelButton.IsEnabled = tab is { IsRunning: true };
         }
     }
 
@@ -1253,8 +1277,11 @@ public partial class MainWindow : Window
         _syncingCombo = false;
 
         ExecuteButton.IsEnabled = ExplainButton.IsEnabled = tab is { IsRunning: false };
-        CancelButton.IsEnabled = tab is { IsRunning: true };
-        DisconnectButton.IsEnabled = _databases.Count > 0;
+        CancelButton.IsEnabled = CancelMenuItem.IsEnabled = tab is { IsRunning: true };
+        DisconnectButton.IsEnabled = DiagramButton.IsEnabled = _databases.Count > 0;
+        // El tema atenúa el texto de un botón deshabilitado, pero no sus iconos de color: se atenúan aquí.
+        foreach (var button in new[] { ExecuteButton, ExplainButton, CancelButton, DiagramButton })
+            ((UIElement)button.Content).Opacity = button.IsEnabled ? 1 : 0.4;
 
         // La barra de la principal muestra la pestaña visible de esta ventana (no la de una flotante).
         StatusView.Update(VisibleTab(_main), _databases.Count > 0 ? "Listo" : "Sin conexión");
@@ -1370,6 +1397,12 @@ public partial class MainWindow : Window
             case NodeKind.Server:
             case NodeKind.Database:
                 Add("Nueva consulta", () => AddTab(node.Profile, node.Database));
+                if (node.Kind == NodeKind.Database)
+                {
+                    Add("Ver diagrama", () => new DiagramWindow(node.Profile, node.Database!, Icon).Show());
+                    Add("Copia de seguridad (.sql)...", () => _ = BackupAsync(node));
+                    Add("Restaurar desde .sql...", () => _ = RestoreAsync(item, node));
+                }
                 Add("Actualizar", () => _ = RefreshAsync(item, node));
                 menu.Items.Add(new Separator());
                 Add("Desconectar", () => Disconnect(node.Profile));
@@ -1408,6 +1441,8 @@ public partial class MainWindow : Window
                     AddScript("DELETE", columns => ScriptTemplates.Delete(fullName, columns));
                 }
                 menu.Items.Add(scriptAs);
+                if (node.Kind == NodeKind.Table)
+                    Add("Importar datos (CSV, Excel)...", () => _ = ImportAsync(node));
                 Add("Actualizar", () => _ = RefreshAsync(item, node));
                 break;
 
@@ -1428,6 +1463,124 @@ public partial class MainWindow : Window
                 break;
         }
         return menu;
+    }
+
+    // ---------- Copia de seguridad y restauración ----------
+
+    /// <summary>Ejecuta un trabajo largo mostrando la ventana de progreso (con Cancelar) y bloqueando la principal.</summary>
+    private async Task<T> RunWithProgressAsync<T>(string title, Func<IProgress<BackupProgress>, CancellationToken, Task<T>> work)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var dialog = new ProgressDialog(this, title, cancellation);
+        var progress = new Progress<BackupProgress>(p => dialog.Report(p.Step, p.Done, p.Total));
+        IsEnabled = false;
+        dialog.Show();
+        try
+        {
+            return await Task.Run(() => work(progress, cancellation.Token));
+        }
+        finally
+        {
+            IsEnabled = true;
+            dialog.Finish();
+        }
+    }
+
+    private static string DatabaseLabel(Node node) =>
+        node.Profile.Kind == DbKind.Sqlite ? node.Profile.Name : $"{node.Database} ({node.Profile.Name})";
+
+    private async Task BackupAsync(Node node)
+    {
+        string database = node.Database!;
+        try
+        {
+            var tables = (await Db.ListTablesAsync(node.Profile, database)).Where(t => !t.IsView).Select(t => t.Name).ToList();
+            string baseName = node.Profile.Kind == DbKind.Sqlite ? Path.GetFileNameWithoutExtension(node.Profile.FilePath) ?? "base" : database;
+            string suggested = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), $"{baseName}_{DateTime.Now:yyyyMMdd_HHmm}.sql");
+
+            var dialog = new BackupDialog(this, DatabaseLabel(node), tables, suggested);
+            if (dialog.ShowDialog() != true || dialog.Options == null) return;
+            string path = dialog.FilePath;
+            if (File.Exists(path) && MessageBox.Show(this, $"El archivo ya existe:\n{path}\n\n¿Reemplazarlo?", "Copia de seguridad",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+
+            try
+            {
+                var summary = await RunWithProgressAsync("Creando la copia de seguridad",
+                    (progress, token) => DatabaseBackup.ExportAsync(node.Profile, database, dialog.Options, path, progress, token));
+                MessageBox.Show(this,
+                    $"Copia creada.\n\nTablas: {summary.Tables:N0}\nFilas: {summary.Rows:N0}\nVistas, rutinas y triggers: {summary.OtherObjects:N0}\n\n" +
+                    $"{path}\n({new FileInfo(path).Length / 1024.0:N0} KB)",
+                    "Copia de seguridad", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (OperationCanceledException)
+            {
+                try { File.Delete(path); } catch { }   // un archivo a medias no sirve como copia
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "No se pudo crear la copia", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task RestoreAsync(TreeViewItem item, Node node)
+    {
+        var open = new OpenFileDialog { Filter = FileFilter, Title = "Elegir el archivo .sql a restaurar" };
+        if (open.ShowDialog(this) != true) return;
+        string path = open.FileName;
+
+        try
+        {
+            var statements = await Task.Run(() => DatabaseBackup.ReadScript(path, node.Profile.Kind));
+            if (statements.Count == 0)
+            {
+                MessageBox.Show(this, "El archivo no contiene ninguna sentencia.", "Restaurar", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            string target = DatabaseLabel(node) + (node.Profile.IsProduction ? "  —  PRODUCCIÓN" : "");
+            var answer = MessageBox.Show(this,
+                $"Vas a ejecutar {statements.Count:N0} sentencias de\n{path}\n\nsobre: {target}\n\n" +
+                "Si es una copia de seguridad, las tablas que contenga se borrarán y se volverán a crear con los datos del archivo. " +
+                "No se puede deshacer.\n\n¿Continuar?",
+                node.Profile.IsProduction ? "Restaurar en PRODUCCIÓN" : "Restaurar", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes) return;
+
+            var result = await RunWithProgressAsync("Restaurando",
+                (progress, token) => DatabaseBackup.RestoreAsync(node.Profile, node.Database!, statements, progress, token));
+            if (result.Error != null)
+                MessageBox.Show(this,
+                    $"Se detuvo en la sentencia de la línea {result.ErrorLine} (se ejecutaron {result.Executed:N0} de {result.Total:N0}):\n\n{result.Error}",
+                    "Restauración incompleta", MessageBoxButton.OK, MessageBoxImage.Error);
+            else
+                MessageBox.Show(this, $"Restauración completada: {result.Executed:N0} sentencias ejecutadas.", "Restaurar", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            MessageBox.Show(this, "Restauración cancelada. La base puede haber quedado a medias.", "Restaurar", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "No se pudo restaurar", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        // La estructura pudo cambiar: se refrescan el árbol y el autocompletado.
+        SchemaCache.Invalidate(node.Profile);
+        await RefreshAsync(item, node);
+    }
+
+    private async Task ImportAsync(Node node)
+    {
+        try
+        {
+            var columns = await Db.GetColumnsAsync(node.Profile, node.Database!, node.Name!);
+            new ImportDialog(this, node.Profile, node.Database!, node.Name!, columns).ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "No se pudo preparar la importación", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private static SchemaObject ObjectKind(NodeKind kind) => kind switch

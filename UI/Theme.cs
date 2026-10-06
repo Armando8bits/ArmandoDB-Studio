@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using ICSharpCode.AvalonEdit.Highlighting;
 using Microsoft.Win32;
@@ -38,11 +39,29 @@ public static class Theme
         ["Brush.OkText"] = ("#1E7B34", "#6CCB7A"),
         ["Brush.PanelBackground"] = ("#F3F5F9", "#252526"),
         ["Brush.PanelBorder"] = ("#D6DBE9", "#3F3F46"),
+        // Plan de ejecución gráfico: color por tipo de paso
+        ["Brush.PlanFullScan"] = ("#D83B01", "#F7894A"),
+        ["Brush.PlanIndex"] = ("#2E9E4F", "#6CCB7A"),
+        ["Brush.PlanJoin"] = ("#2F6FD6", "#6CA8FF"),
+        ["Brush.PlanSort"] = ("#8764B8", "#B799E0"),
+        ["Brush.PlanOther"] = ("#8A8A8A", "#9A9A9A"),
         // Conexiones de producción
         ["Brush.ProdAccent"] = ("#C42B1C", "#E5534B"),
         ["Brush.ProdText"] = ("#C42B1C", "#FF7B72"),
         ["Brush.ProdStatusBar"] = ("#C42B1C", "#8E1F17"),
         ["Brush.ProdStatusBarText"] = ("#FFFFFF", "#FFFFFF"),
+    };
+
+    // Pinceles del tema Fluent para "puntero encima", sustituidos en el tema claro por un tono azulado visible.
+    private const string HoverFill = "#2E007ACC", HoverFillSoft = "#22007ACC";
+    private static readonly Dictionary<string, string> LightHover = new()
+    {
+        ["ButtonBackgroundPointerOver"] = HoverFill,
+        ["RepeatButtonBackgroundPointerOver"] = HoverFill,
+        ["ToggleButtonBackgroundPointerOver"] = HoverFill,
+        ["ComboBoxBackgroundPointerOver"] = HoverFillSoft,
+        ["MenuBarItemBackgroundSelected"] = HoverFill,       // menús de la barra superior
+        ["SubtleFillColorSecondaryBrush"] = HoverFillSoft,   // elementos de menú, listas, árbol, botones de barra
     };
 
     // Colores del resaltado SQL (nombres de la definición TSQL de AvalonEdit): (claro, oscuro)
@@ -83,6 +102,25 @@ public static class Theme
 
         foreach (var (key, colors) in Palette)
             app.Resources[key] = Frozen(IsDark ? colors.Dark : colors.Light);
+
+        // En claro, el sombreado de Fluent al pasar el puntero casi no se distingue del fondo: se refuerza.
+        // En oscuro se deja el del tema, que sí se nota.
+        foreach (var (key, color) in LightHover)
+        {
+            if (IsDark) app.Resources.Remove(key);
+            else app.Resources[key] = Frozen(color);
+        }
+
+        // Los botones de la barra de herramientas no usan esos pinceles: su fondo es un blanco translúcido que
+        // aparece al pasar el puntero (invisible sobre una barra clara). Se les da el mismo tono, heredando el resto.
+        app.Resources.Remove(ToolBar.ButtonStyleKey);
+        if (!IsDark && app.TryFindResource(ToolBar.ButtonStyleKey) is Style toolBarButton)
+        {
+            var style = new Style(typeof(Button), toolBarButton);
+            // Opacidad 0: la animación del tema la lleva a 1 mientras el puntero está encima.
+            style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(ParseColor(HoverFill)) { Opacity = 0 }));
+            app.Resources[ToolBar.ButtonStyleKey] = style;
+        }
 
         var sql = HighlightingManager.Instance.GetDefinition("TSQL");
         if (sql != null)

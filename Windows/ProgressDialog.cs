@@ -50,6 +50,13 @@ public class ProgressDialog : Window
         _text.Text = $"{done:N0} de {total:N0} filas";
     }
 
+    /// <summary>Avance con un texto libre (p. ej. "Tabla clientes").</summary>
+    public void Report(string step, int done, int total)
+    {
+        _bar.Value = total == 0 ? 100 : done * 100.0 / total;
+        _text.Text = total == 0 ? step : $"{step}  ({done:N0} de {total:N0})";
+    }
+
     public void Finish()
     {
         _finished = true;

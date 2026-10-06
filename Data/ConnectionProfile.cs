@@ -177,6 +177,9 @@ public record ColumnInfo(string Name, string Type, bool PrimaryKey, bool Nullabl
         $"{Name} ({(Type.Length == 0 ? "sin tipo" : Type)}{(PrimaryKey ? ", PK" : "")}{(Nullable ? ", null" : ", not null")})";
 }
 
+/// <summary>Una columna de <paramref name="Table"/> que apunta a otra tabla. <paramref name="RefColumn"/> null: a su clave primaria.</summary>
+public record ForeignKey(string Table, string Column, string RefTable, string? RefColumn);
+
 public record IndexInfo(string Name, bool Unique, bool Primary, string Columns)
 {
     /// <summary>Texto del árbol: "nombre (col1, col2) único".</summary>
@@ -286,6 +289,52 @@ public static class Db
             "FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = @p0 AND TABLE_NAME = @p1 " +
             "GROUP BY INDEX_NAME ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME", database, table);
         return rows.Select(r => new IndexInfo(r[0]!, r[1] == "0", r[0] == "PRIMARY", r[2] ?? "")).ToList();
+    }
+
+    /// <summary>Todas las tablas de la base (sin vistas) con sus columnas, en una sola consulta. Para el diagrama.</summary>
+    public static async Task<List<(string Table, List<ColumnInfo> Columns)>> GetAllTablesAsync(ConnectionProfile profile, string database)
+    {
+        var tables = new List<(string Table, List<ColumnInfo> Columns)>();
+        void Add(string table, ColumnInfo column)
+        {
+            if (tables.Count == 0 || tables[^1].Table != table) tables.Add((table, new List<ColumnInfo>()));
+            tables[^1].Columns.Add(column);
+        }
+
+        if (profile.Kind == DbKind.Sqlite)
+        {
+            var rows = await QueryAsync(profile, null,
+                "SELECT m.name, p.name, p.type, p.\"notnull\", p.pk FROM sqlite_master m JOIN pragma_table_info(m.name) p " +
+                "WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name, p.cid");
+            foreach (var r in rows)
+                Add(r[0]!, new ColumnInfo(r[1]!, r[2] ?? "", r[4] != "0", r[3] != "1" && r[4] == "0", false));
+            return tables;
+        }
+
+        var columns = await QueryAsync(profile, null,
+            "SELECT c.TABLE_NAME, c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE, c.COLUMN_KEY, c.EXTRA " +
+            "FROM information_schema.COLUMNS c JOIN information_schema.TABLES t " +
+            "ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME " +
+            "WHERE c.TABLE_SCHEMA = @p0 AND t.TABLE_TYPE = 'BASE TABLE' ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION", database);
+        foreach (var r in columns)
+            Add(r[0]!, new ColumnInfo(r[1]!, r[2] ?? "", r[4] == "PRI", r[3] == "YES",
+                (r[5] ?? "").Contains("auto_increment", StringComparison.OrdinalIgnoreCase)));
+        return tables;
+    }
+
+    /// <summary>Claves foráneas declaradas entre tablas de la misma base.</summary>
+    public static async Task<List<ForeignKey>> ListForeignKeysAsync(ConnectionProfile profile, string database)
+    {
+        var rows = profile.Kind == DbKind.Sqlite
+            ? await QueryAsync(profile, null,
+                "SELECT m.name, f.\"from\", f.\"table\", f.\"to\" FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f " +
+                "WHERE m.type = 'table' ORDER BY m.name, f.id, f.seq")
+            : await QueryAsync(profile, null,
+                "SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE " +
+                "WHERE TABLE_SCHEMA = @p0 AND REFERENCED_TABLE_SCHEMA = @p0 AND REFERENCED_TABLE_NAME IS NOT NULL " +
+                "ORDER BY TABLE_NAME, CONSTRAINT_NAME, ORDINAL_POSITION", database);
+        // En SQLite, "to" puede venir vacío: la referencia es a la clave primaria de la otra tabla.
+        return rows.Select(r => new ForeignKey(r[0]!, r[1]!, r[2]!, r[3])).ToList();
     }
 
     /// <summary>Script CREATE de cualquier objeto. Rutinas y triggers van entre DELIMITER para poder volver a ejecutarlos.</summary>

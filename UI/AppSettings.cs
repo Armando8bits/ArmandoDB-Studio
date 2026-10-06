@@ -31,6 +31,9 @@ public class AppSettings
     /// <summary>En conexiones de producción, confirmar cualquier sentencia que modifique datos o estructura.</summary>
     public bool ConfirmProductionWrites { get; set; } = true;
 
+    /// <summary>Plan de ejecución como diagrama (true) o como texto (false).</summary>
+    public bool PlanAsDiagram { get; set; } = true;
+
     public static AppSettings Current { get; } = Load();
 
     private static AppSettings Load()

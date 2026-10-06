@@ -118,6 +118,10 @@ public partial class QueryTab : UserControl
         ApplyFont();
         ApplyTheme();
         _filterTimer.Tick += (_, _) => ApplyResultFilter();
+        PlanLegend.Content = PlanDiagram.Legend();
+        PlanAsDiagram.IsChecked = AppSettings.Current.PlanAsDiagram;
+        PlanAsText.IsChecked = !AppSettings.Current.PlanAsDiagram;
+        PlanViewMode_Changed(this, new RoutedEventArgs());
 
         // Ctrl+F, F3 y Mayús+F3: panel de búsqueda del editor, en español.
         _search = SearchPanel.Install(Editor);
@@ -609,9 +613,13 @@ public partial class QueryTab : UserControl
         RowsText = "";
         RowCount = null;
         TimeText = "";
+        // Se pasa ya a la pestaña del plan, con el aviso de carga encima del plan anterior.
+        PlanLoading.Visibility = Visibility.Visible;
+        ResultTabs.SelectedIndex = PlanTab;
         StateChanged?.Invoke(this);
 
         var output = new StringBuilder();
+        var sections = new List<PlanSection>();
         bool failed = false, cancelled = false;
         string? database = CurrentDatabase;
         var watch = Stopwatch.StartNew();
@@ -625,14 +633,19 @@ public partial class QueryTab : UserControl
                 {
                     token.ThrowIfCancellationRequested();
                     int line = statement.Line + lineOffset;
-                    output.AppendLine($"-- Línea {line}: {FirstLine(statement.Text)}");
+                    string header = $"Línea {line}: {FirstLine(statement.Text)}";
+                    output.AppendLine("-- " + header);
                     try
                     {
-                        output.AppendLine(await PlanAsync(statement.Text, token));
+                        var (text, root) = await PlanAsync(statement.Text, token);
+                        output.AppendLine(text);
+                        sections.Add(new PlanSection(header, root, root == null ? text : null, IsError: false));
                     }
                     catch (DbException ex) when (!token.IsCancellationRequested)
                     {
-                        output.AppendLine($"Error {Db.ErrorCode(ex)}, línea {line}: {ex.Message.ReplaceLineEndings(" ")}");
+                        string error = $"Error {Db.ErrorCode(ex)}, línea {line}: {ex.Message.ReplaceLineEndings(" ")}";
+                        output.AppendLine(error);
+                        sections.Add(new PlanSection(header, null, error, IsError: true));
                         failed = true;
                     }
                     output.AppendLine();
@@ -662,6 +675,8 @@ public partial class QueryTab : UserControl
         PlanView.Text = output.ToString();
         PlanView.ScrollToHome();
         ResultTabs.SelectedIndex = PlanTab;
+        PlanLoading.Visibility = Visibility.Collapsed;
+        ShowPlanDiagram(sections);
 
         CurrentDatabase = database;
         IsRunning = false;
@@ -677,33 +692,119 @@ public partial class QueryTab : UserControl
     private static readonly Regex AlreadyExplain = new(@"^\s*(EXPLAIN|DESCRIBE|DESC)\b", RegexOptions.IgnoreCase);
     private static readonly Regex UseStatement = new(@"^\s*USE\b", RegexOptions.IgnoreCase);
 
-    /// <summary>Plan de una sentencia, como texto. Nunca ejecuta la consulta (salvo que ya venga con EXPLAIN ANALYZE).</summary>
-    private async Task<string> PlanAsync(string sql, CancellationToken token)
+    /// <summary>Plan de una sentencia para la vista de diagrama: su árbol, o una nota/error si no lo tiene.</summary>
+    private sealed record PlanSection(string Header, PlanNode? Root, string? Note, bool IsError);
+
+    /// <summary>
+    /// Plan de una sentencia: como texto y, si se pudo interpretar, como árbol para el diagrama.
+    /// Nunca ejecuta la consulta (salvo que ya venga con EXPLAIN ANALYZE).
+    /// </summary>
+    private async Task<(string Text, PlanNode? Root)> PlanAsync(string sql, CancellationToken token)
     {
         // Un USE previo cambia la base con la que se explican las siguientes sentencias, así que se aplica.
         if (UseStatement.IsMatch(sql))
         {
             await QueryAsync(sql, token);
-            return "(USE aplicado; no tiene plan)";
+            return ("(USE aplicado; no tiene plan)", null);
         }
         // Si el usuario ya escribió EXPLAIN, se respeta tal cual.
         if (AlreadyExplain.IsMatch(sql))
-            return FormatPlanResult(await QueryAsync(sql, token));
+            return Interpret(await QueryAsync(sql, token));
         if (!Explainable.IsMatch(sql))
-            return "(sin plan: solo se explican SELECT, WITH, INSERT, UPDATE, DELETE y REPLACE)";
+            return ("(sin plan: solo se explican SELECT, WITH, INSERT, UPDATE, DELETE y REPLACE)", null);
 
         if (Profile.Kind == DbKind.Sqlite)
-            return FormatSqliteTree(await QueryAsync("EXPLAIN QUERY PLAN " + sql, token));
+        {
+            var result = await QueryAsync("EXPLAIN QUERY PLAN " + sql, token);
+            return (FormatSqliteTree(result), PlanParser.FromSqlite(result));
+        }
 
         try
         {
-            return FormatPlanResult(await QueryAsync("EXPLAIN FORMAT=TREE " + sql, token));
+            return Interpret(await QueryAsync("EXPLAIN FORMAT=TREE " + sql, token));
         }
         catch (DbException) when (!token.IsCancellationRequested)
         {
             // MariaDB y MySQL < 8.0.16 no tienen FORMAT=TREE. Si la sentencia es la que falla, el EXPLAIN clásico dará el error real.
-            return FormatPlanResult(await QueryAsync("EXPLAIN " + sql, token));
+            return Interpret(await QueryAsync("EXPLAIN " + sql, token));
         }
+    }
+
+    /// <summary>Texto y árbol de un resultado de EXPLAIN, sea cual sea su forma.</summary>
+    private (string Text, PlanNode? Root) Interpret(ResultSet result)
+    {
+        string text = FormatPlanResult(result);
+        if (Profile.Kind == DbKind.Sqlite && result.Columns.Length == 4)
+            return (FormatSqliteTree(result), PlanParser.FromSqlite(result));
+        var root = result.Columns.Length == 1 ? PlanParser.FromMySqlTree(text) : PlanParser.FromClassicTable(result);
+        return (text, root);
+    }
+
+    private double _planZoom = 1;
+
+    /// <summary>Un árbol por sentencia, uno debajo de otro; las sentencias sin plan o con error muestran su texto.</summary>
+    private void ShowPlanDiagram(List<PlanSection> sections)
+    {
+        PlanDiagramPanel.Children.Clear();
+        foreach (var section in sections)
+        {
+            var header = new TextBlock { Text = section.Header, FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 10, 10, 2), TextTrimming = TextTrimming.CharacterEllipsis,
+                // Acotado: una sentencia larga no debe ensanchar la zona y crear desplazamiento horizontal de más.
+                MaxWidth = 900, HorizontalAlignment = HorizontalAlignment.Left, ToolTip = section.Header };
+            PlanDiagramPanel.Children.Add(header);
+            if (section.Root != null)
+            {
+                PlanDiagramPanel.Children.Add(PlanDiagram.Build(section.Root));
+                continue;
+            }
+            var note = new TextBlock { Text = section.Note, Margin = new Thickness(10, 2, 10, 6), TextWrapping = TextWrapping.Wrap, MaxWidth = 900, HorizontalAlignment = HorizontalAlignment.Left };
+            note.SetResourceReference(TextBlock.ForegroundProperty, section.IsError ? "Brush.ErrorText" : "Brush.SecondaryText");
+            PlanDiagramPanel.Children.Add(note);
+        }
+        CenterPlanDiagram();
+    }
+
+    /// <summary>
+    /// Centra la vista en el primer árbol. La raíz queda a media altura de su árbol, así que en un plan grande
+    /// la esquina superior izquierda está vacía y parecería que no hay nada.
+    /// </summary>
+    private void CenterPlanDiagram()
+    {
+        PlanDiagramScroll.ScrollToHome();
+        // Tras el diseño: hasta entonces no se conocen el tamaño del diagrama ni el de la zona visible.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (PlanDiagramPanel.Children.OfType<Canvas>().FirstOrDefault() is not { } tree || !PlanDiagramScroll.IsVisible) return;
+            PlanDiagramScroll.UpdateLayout();
+            var bounds = tree.TransformToAncestor(PlanDiagramScroll).TransformBounds(new Rect(tree.RenderSize));
+            double x = PlanDiagramScroll.HorizontalOffset + bounds.Left + bounds.Width / 2 - PlanDiagramScroll.ViewportWidth / 2;
+            double y = PlanDiagramScroll.VerticalOffset + bounds.Top + bounds.Height / 2 - PlanDiagramScroll.ViewportHeight / 2;
+            // Si el árbol cabe a lo ancho o a lo alto, en ese eje se deja al principio (con su título a la vista).
+            PlanDiagramScroll.ScrollToHorizontalOffset(bounds.Width > PlanDiagramScroll.ViewportWidth ? x : 0);
+            PlanDiagramScroll.ScrollToVerticalOffset(bounds.Height > PlanDiagramScroll.ViewportHeight ? y : 0);
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void PlanViewMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (PlanDiagramScroll == null) return;   // durante la carga del XAML
+        bool diagram = PlanAsDiagram.IsChecked == true;
+        PlanDiagramScroll.Visibility = diagram ? Visibility.Visible : Visibility.Collapsed;
+        PlanView.Visibility = diagram ? Visibility.Collapsed : Visibility.Visible;
+        PlanLegend.Visibility = diagram ? Visibility.Visible : Visibility.Collapsed;
+        if (diagram) CenterPlanDiagram();
+        if (AppSettings.Current.PlanAsDiagram == diagram) return;
+        AppSettings.Current.PlanAsDiagram = diagram;
+        try { AppSettings.Current.Save(); } catch { }
+    }
+
+    /// <summary>Ctrl+rueda sobre el diagrama del plan: zoom.</summary>
+    private void PlanDiagramScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.Control) return;
+        e.Handled = true;
+        _planZoom = Math.Clamp(_planZoom * (e.Delta > 0 ? 1.1 : 1 / 1.1), 0.3, 2.5);
+        PlanDiagramPanel.LayoutTransform = new ScaleTransform(_planZoom, _planZoom);
     }
 
     private async Task<ResultSet> QueryAsync(string sql, CancellationToken token)

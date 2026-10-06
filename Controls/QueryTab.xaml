@@ -85,10 +85,33 @@
                                    WordWrap="True"
                                    VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
             </TabItem>
-            <!-- Sin ajuste de línea: el árbol del plan se lee por su sangría. -->
+            <!-- El plan se ve como diagrama (árbol de pasos) o como texto, a elegir. -->
             <TabItem Header="Plan de ejecución">
-                <avalon:TextEditor x:Name="PlanView" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Padding="4,2"
-                                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4,6,2">
+                        <RadioButton x:Name="PlanAsDiagram" Content="Diagrama" GroupName="PlanView" VerticalAlignment="Center"
+                                     Checked="PlanViewMode_Changed" Unchecked="PlanViewMode_Changed"
+                                     ToolTip="Árbol de pasos; Ctrl+rueda para acercar o alejar"/>
+                        <RadioButton x:Name="PlanAsText" Content="Texto" GroupName="PlanView" Margin="14,0,0,0" VerticalAlignment="Center"/>
+                        <ContentControl x:Name="PlanLegend" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <Grid>
+                        <!-- Sin ajuste de línea: el árbol de texto se lee por su sangría. -->
+                        <avalon:TextEditor x:Name="PlanView" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Padding="4,2"
+                                           VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
+                        <ScrollViewer x:Name="PlanDiagramScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                      Background="{DynamicResource Brush.EditorBackground}" PreviewMouseWheel="PlanDiagramScroll_PreviewMouseWheel">
+                            <StackPanel x:Name="PlanDiagramPanel" HorizontalAlignment="Left"/>
+                        </ScrollViewer>
+                        <!-- Aviso mientras se genera el plan: con latencia (túnel, servidor lejano) tarda. -->
+                        <Border x:Name="PlanLoading" Visibility="Collapsed" Background="{DynamicResource Brush.EditorBackground}">
+                            <StackPanel Width="320" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="Generando el plan de ejecución..." HorizontalAlignment="Center" Margin="0,0,0,8"/>
+                                <ProgressBar IsIndeterminate="True" Height="6"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </DockPanel>
             </TabItem>
         </TabControl>
     </Grid>

@@ -11,6 +11,10 @@
 
     Compilar y ejecutar en un solo paso:
         dotnet run -c Release
+
+    Generar el instalador (Setup.exe con .NET incluido, para equipos sin .NET; requiere Inno Setup 6):
+        .\installer\build-installer.ps1
+    El resultado queda en installer\Output. La versión sale de <Version> más abajo.
   -->
 
   <PropertyGroup>
@@ -21,6 +25,7 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>MySmdb</RootNamespace>
     <AssemblyName>ArmandoDBStudio</AssemblyName>
+    <Version>1.0.0</Version>
     <Product>ArmandoDB Studio</Product>
     <AssemblyTitle>ArmandoDB Studio</AssemblyTitle>
     <Company>ArmandoDB Studio</Company>
@@ -35,6 +40,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="AutomaticGraphLayout" Version="1.1.12" />
     <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="MySqlConnector" Version="2.6.2" />

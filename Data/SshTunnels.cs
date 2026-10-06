@@ -98,6 +98,8 @@ public static class SshTunnels
         var methods = new List<AuthenticationMethod>();
         if (!string.IsNullOrWhiteSpace(profile.SshKeyFile))
         {
+            if (!File.Exists(profile.SshKeyFile))
+                throw new InvalidOperationException($"No se encuentra el archivo de clave SSH: {profile.SshKeyFile}");
             var key = string.IsNullOrEmpty(profile.SshPassphrase)
                 ? new PrivateKeyFile(profile.SshKeyFile)
                 : new PrivateKeyFile(profile.SshKeyFile, profile.SshPassphrase);
