@@ -271,11 +271,11 @@ public static class ResultExporter
     private static void WriteInserts(string path, string[] columns, IReadOnlyList<object?[]> rows, string? sourceTable, DbKind kind, Action<int> step)
     {
         using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
-        string table = Db.QuoteId(sourceTable ?? "tabla_destino");
+        string table = Db.QuoteId(kind, sourceTable ?? "tabla_destino");
         writer.WriteLine($"-- Exportado con {App.Name} el {DateTime.Now:yyyy-MM-dd HH:mm:ss} ({rows.Count:N0} filas).");
         if (sourceTable == null)
-            writer.WriteLine("-- El resultado no venía de una sola tabla: cambia `tabla_destino` por la tabla real.");
-        string header = $"INSERT INTO {table} ({string.Join(", ", columns.Select(Db.QuoteId))}) VALUES";
+            writer.WriteLine($"-- El resultado no venía de una sola tabla: cambia {table} por la tabla real.");
+        string header = $"INSERT INTO {table} ({string.Join(", ", columns.Select(c => Db.QuoteId(kind, c)))}) VALUES";
 
         for (int r = 0; r < rows.Count; r++)
         {
@@ -292,10 +292,27 @@ public static class ResultExporter
         }
     }
 
+    /// <summary>
+    /// Literales propios de SQL Server: binarios como 0x..., fechas en formato ISO (no dependen del idioma de la
+    /// sesión) y cadenas con N'...' para no perder caracteres fuera de la página de códigos.
+    /// </summary>
+    private static string? SqlServerLiteral(object value) => value switch
+    {
+        byte[] bytes => bytes.Length == 0 ? "0x" : "0x" + Convert.ToHexString(bytes),
+        DateTime d => "'" + d.ToString(d.Ticks % TimeSpan.TicksPerSecond == 0 ? "yyyy-MM-ddTHH:mm:ss"
+            : d.Ticks % TimeSpan.TicksPerMillisecond == 0 ? "yyyy-MM-ddTHH:mm:ss.fff" : "yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture) + "'",
+        DateTimeOffset o => "'" + o.ToString("yyyy-MM-ddTHH:mm:ss.fffffffzzz", CultureInfo.InvariantCulture) + "'",
+        TimeSpan t => "'" + t.ToString(@"hh\:mm\:ss\.fffffff", CultureInfo.InvariantCulture) + "'",
+        Guid g => "'" + g.ToString() + "'",
+        string s => "N'" + s.Replace("'", "''") + "'",
+        _ => null,
+    };
+
     /// <summary>Valor como literal SQL. En MySQL la barra invertida también se escapa dentro de las cadenas.</summary>
     public static string SqlLiteral(object? value, DbKind kind) => value switch
     {
         null => "NULL",
+        { } known when kind == DbKind.SqlServer && SqlServerLiteral(known) is { } literal => literal,
         bool b => b ? "1" : "0",
         byte or sbyte or short or ushort or int or uint or long or ulong or decimal => Convert.ToString(value, CultureInfo.InvariantCulture)!,
         float or double => double.IsFinite(Convert.ToDouble(value, CultureInfo.InvariantCulture))

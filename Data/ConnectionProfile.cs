@@ -4,12 +4,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using MySqlConnector;
 
 namespace MySmdb;
 
-public enum DbKind { MySql, Sqlite }
+public enum DbKind { MySql, Sqlite, SqlServer }
 
 public class ConnectionProfile
 {
@@ -35,7 +36,16 @@ public class ConnectionProfile
     /// <summary>Conexión de producción: se resalta en rojo y pide confirmar cualquier sentencia que modifique.</summary>
     public bool IsProduction { get; set; }
 
-    // ----- Túnel SSH (solo MySQL). Con túnel, Host y Port son los de la base vistos desde el servidor SSH. -----
+    /// <summary>SQL Server: entrar con el usuario de Windows en lugar de usuario y contraseña.</summary>
+    public bool IntegratedSecurity { get; set; }
+
+    /// <summary>
+    /// SQL Server: el servidor va con instancia con nombre ("SERVIDOR\INSTANCIA") o es LocalDB
+    /// ("(localdb)\MSSQLLocalDB"). En ese caso no se usa el puerto: lo resuelve el propio servidor.
+    /// </summary>
+    [JsonIgnore] public bool HasInstanceName => Host.Contains('\\') || Host.StartsWith("(localdb)", StringComparison.OrdinalIgnoreCase);
+
+    // ----- Túnel SSH (MySQL y SQL Server). Con túnel, Host y Port son los de la base vistos desde el servidor SSH. -----
 
     public bool UseSsh { get; set; }
     public string? SshHost { get; set; }
@@ -50,10 +60,16 @@ public class ConnectionProfile
     [JsonIgnore] public string SshPassword { get; set; } = "";
     [JsonIgnore] public string SshPassphrase { get; set; } = "";
 
+    /// <summary>"usuario@servidor:puerto"; en SQL Server, sin puerto si hay instancia y "Windows" si no hay usuario.</summary>
+    [JsonIgnore]
+    private string ServerLabel =>
+        (Kind == DbKind.SqlServer && IntegratedSecurity ? "Windows" : User) + "@" + Host
+        + (Kind == DbKind.SqlServer && HasInstanceName ? "" : ":" + Port);
+
     [JsonIgnore]
     public string DefaultName => Kind == DbKind.Sqlite
         ? $"{Path.GetFileName(FilePath)} ({Path.GetDirectoryName(FilePath)})"
-        : UseSsh ? $"{User}@{Host}:{Port} vía {SshHost}" : $"{User}@{Host}:{Port}";
+        : UseSsh ? $"{ServerLabel} vía {SshHost}" : ServerLabel;
 
     [JsonIgnore] public string Name => string.IsNullOrWhiteSpace(Alias) ? DefaultName : Alias;
 
@@ -61,7 +77,7 @@ public class ConnectionProfile
     [JsonIgnore]
     public string Summary => Kind == DbKind.Sqlite
         ? $"SQLite · {FilePath}"
-        : $"MySQL · {User}@{Host}:{Port}" + (UseSsh ? $" · SSH {SshUser}@{SshHost}" : "");
+        : $"{(Kind == DbKind.SqlServer ? "SQL Server" : "MySQL")} · {ServerLabel}" + (UseSsh ? $" · SSH {SshUser}@{SshHost}" : "");
 
     public override string ToString() => Name;
 
@@ -72,6 +88,29 @@ public class ConnectionProfile
             // Sin pool, para que el archivo quede libre al cerrar la pestaña.
             var sqlite = new SqliteConnectionStringBuilder { DataSource = FilePath ?? "", Pooling = false };
             return new SqliteConnection(sqlite.ConnectionString);
+        }
+
+        if (Kind == DbKind.SqlServer)
+        {
+            var sqlServer = new SqlConnectionStringBuilder
+            {
+                // Con túnel, el extremo local; con instancia con nombre o LocalDB, sin puerto; si no, "servidor,puerto".
+                DataSource = UseSsh ? $"127.0.0.1,{SshTunnels.LocalPort(this)}" : HasInstanceName ? Host : $"{Host},{Port}",
+                InitialCatalog = database ?? "",
+                IntegratedSecurity = IntegratedSecurity,
+                // Cada pestaña es una sesión propia, como en SSMS.
+                Pooling = false,
+                // Cifrado sí, pero sin exigir un certificado de una autoridad: lo normal en servidores internos.
+                TrustServerCertificate = true,
+                ConnectTimeout = 15,
+                ApplicationName = App.Name,
+            };
+            if (!IntegratedSecurity)
+            {
+                sqlServer.UserID = User;
+                sqlServer.Password = Password;
+            }
+            return new SqlConnection(sqlServer.ConnectionString);
         }
 
         // Con túnel, se conecta al extremo local del túnel (lo abre si hace falta).
@@ -219,6 +258,7 @@ public static class Db
 
     public static async Task<List<string>> ListDatabasesAsync(ConnectionProfile profile)
     {
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListDatabasesAsync(profile);
         if (profile.Kind == DbKind.Sqlite)
             return (await QueryAsync(profile, null, "PRAGMA database_list")).Select(r => r[1]!).ToList();
         return (await QueryAsync(profile, null, "SHOW DATABASES")).Select(r => r[0]!).ToList();
@@ -226,6 +266,7 @@ public static class Db
 
     public static async Task<List<(string Name, bool IsView)>> ListTablesAsync(ConnectionProfile profile, string database)
     {
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListTablesAsync(profile, database);
         var rows = profile.Kind == DbKind.Sqlite
             ? await QueryAsync(profile, null,
                 "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -236,6 +277,7 @@ public static class Db
 
     public static async Task<List<ColumnInfo>> GetColumnsAsync(ConnectionProfile profile, string database, string table)
     {
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.GetColumnsAsync(profile, database, table);
         if (profile.Kind == DbKind.Sqlite)
         {
             var info = await QueryAsync(profile, null, "SELECT name, type, \"notnull\", pk FROM pragma_table_info(@p0)", table);
@@ -260,6 +302,7 @@ public static class Db
     public static async Task<List<(string Name, bool IsFunction)>> ListRoutinesAsync(ConnectionProfile profile, string database)
     {
         if (profile.Kind == DbKind.Sqlite) return new();
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListRoutinesAsync(profile, database);
         var rows = await QueryAsync(profile, null,
             "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = @p0 ORDER BY ROUTINE_NAME", database);
         return rows.Select(r => (r[0]!, r[1] == "FUNCTION")).ToList();
@@ -267,6 +310,7 @@ public static class Db
 
     public static async Task<List<(string Name, string Table)>> ListTriggersAsync(ConnectionProfile profile, string database)
     {
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListTriggersAsync(profile, database);
         var rows = profile.Kind == DbKind.Sqlite
             ? await QueryAsync(profile, null, "SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
             : await QueryAsync(profile, null,
@@ -276,6 +320,7 @@ public static class Db
 
     public static async Task<List<IndexInfo>> ListIndexesAsync(ConnectionProfile profile, string database, string table)
     {
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListIndexesAsync(profile, database, table);
         if (profile.Kind == DbKind.Sqlite)
         {
             var info = await QueryAsync(profile, null,
@@ -294,6 +339,8 @@ public static class Db
     /// <summary>Todas las tablas de la base (sin vistas) con sus columnas, en una sola consulta. Para el diagrama.</summary>
     public static async Task<List<(string Table, List<ColumnInfo> Columns)>> GetAllTablesAsync(ConnectionProfile profile, string database)
     {
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.GetAllTablesAsync(profile, database);
+
         var tables = new List<(string Table, List<ColumnInfo> Columns)>();
         void Add(string table, ColumnInfo column)
         {
@@ -325,6 +372,7 @@ public static class Db
     /// <summary>Claves foráneas declaradas entre tablas de la misma base.</summary>
     public static async Task<List<ForeignKey>> ListForeignKeysAsync(ConnectionProfile profile, string database)
     {
+        if (profile.Kind == DbKind.SqlServer) return await SqlServerCatalog.ListForeignKeysAsync(profile, database);
         var rows = profile.Kind == DbKind.Sqlite
             ? await QueryAsync(profile, null,
                 "SELECT m.name, f.\"from\", f.\"table\", f.\"to\" FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f " +
@@ -340,6 +388,26 @@ public static class Db
     /// <summary>Script CREATE de cualquier objeto. Rutinas y triggers van entre DELIMITER para poder volver a ejecutarlos.</summary>
     public static async Task<string> GetCreateScriptAsync(ConnectionProfile profile, string database, SchemaObject kind, string name, string? table = null)
     {
+        if (profile.Kind == DbKind.SqlServer)
+        {
+            switch (kind)
+            {
+                case SchemaObject.Table:
+                    return await SqlServerCatalog.ScriptTableTextAsync(profile, database, name);
+                case SchemaObject.Index:
+                    var found = (await ListIndexesAsync(profile, database, table!)).FirstOrDefault(i => i.Name == name)
+                        ?? throw new InvalidOperationException($"No se encontró el índice {name}.");
+                    string keys = string.Join(", ", found.Columns.Split(", ").Select(SqlServerCatalog.Quote));
+                    string on = SqlServerCatalog.QuoteFull(table!);
+                    return (found.Primary
+                        ? $"ALTER TABLE {on} ADD CONSTRAINT {SqlServerCatalog.Quote(name)} PRIMARY KEY ({keys});"
+                        : $"CREATE {(found.Unique ? "UNIQUE " : "")}INDEX {SqlServerCatalog.Quote(name)} ON {on} ({keys});") + Environment.NewLine + "GO";
+                default:
+                    // Vistas, procedimientos, funciones y triggers: su texto original. Cada uno debe ir solo en su lote.
+                    return await SqlServerCatalog.GetDefinitionAsync(profile, database, name) + Environment.NewLine + "GO";
+            }
+        }
+
         string full = $"{QuoteId(database)}.{QuoteId(name)}";
 
         if (kind == SchemaObject.Index)
@@ -384,12 +452,30 @@ public static class Db
     public static int ErrorCode(DbException ex) => ex switch
     {
         MySqlException mysql => mysql.Number,
+        SqlException sqlServer => sqlServer.Number,
         SqliteException sqlite => sqlite.SqliteErrorCode,
         _ => ex.ErrorCode,
     };
 
-    public static string Prompt(DbKind kind) => kind == DbKind.Sqlite ? "sqlite> " : "mysql> ";
+    public static string Prompt(DbKind kind) => kind switch { DbKind.Sqlite => "sqlite> ", DbKind.SqlServer => "mssql> ", _ => "mysql> " };
 
     /// <summary>Los acentos graves valen en MySQL y SQLite los acepta por compatibilidad.</summary>
     public static string QuoteId(string name) => "`" + name.Replace("`", "``") + "`";
+
+    /// <summary>Nombre de columna u otro identificador simple, con las comillas del motor: `nombre` o [nombre].</summary>
+    public static string QuoteId(DbKind kind, string name) => kind == DbKind.SqlServer ? SqlServerCatalog.Quote(name) : QuoteId(name);
+
+    /// <summary>
+    /// Nombre de una tabla, vista o rutina para usarlo en una sentencia: `base`.`tabla` en MySQL, `tabla` en SQLite
+    /// y [esquema].[tabla] en SQL Server (sin la base: las pestañas ya trabajan dentro de ella).
+    /// </summary>
+    public static string FullName(ConnectionProfile profile, string? database, string name) => profile.Kind switch
+    {
+        DbKind.SqlServer => SqlServerCatalog.QuoteFull(name),
+        DbKind.Sqlite => QuoteId(name),
+        _ => database == null ? QuoteId(name) : $"{QuoteId(database)}.{QuoteId(name)}",
+    };
+
+    /// <summary>Nombre de una tabla dentro de la base ya seleccionada (copias de seguridad): `tabla` o [esquema].[tabla].</summary>
+    public static string LocalName(DbKind kind, string name) => kind == DbKind.SqlServer ? SqlServerCatalog.QuoteFull(name) : QuoteId(name);
 }

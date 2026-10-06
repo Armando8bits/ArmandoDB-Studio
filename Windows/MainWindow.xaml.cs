@@ -1414,11 +1414,12 @@ public partial class MainWindow : Window
 
             case NodeKind.Table:
             case NodeKind.View:
-                string fullName = $"{Db.QuoteId(node.Database!)}.{Db.QuoteId(node.Name!)}";
+                var dialect = node.Profile.Kind;
+                string fullName = Db.FullName(node.Profile, node.Database, node.Name!);
                 Add("Seleccionar las primeras 1000 filas", () =>
                 {
                     var tab = AddTab(node.Profile, node.Database);
-                    tab.SetText($"SELECT *\nFROM {fullName}\nLIMIT 1000;\n");
+                    tab.SetText(ScriptTemplates.SelectTop(dialect, fullName));
                     _ = tab.ExecuteAsync();
                 });
 
@@ -1433,12 +1434,12 @@ public partial class MainWindow : Window
                     scriptAs.Items.Add(scriptItem);
                 }
                 AddScript("CREATE", null);
-                AddScript("SELECT", columns => ScriptTemplates.Select(fullName, columns));
+                AddScript("SELECT", columns => ScriptTemplates.Select(dialect, fullName, columns));
                 if (node.Kind == NodeKind.Table)
                 {
-                    AddScript("INSERT", columns => ScriptTemplates.Insert(fullName, columns));
-                    AddScript("UPDATE", columns => ScriptTemplates.Update(fullName, columns));
-                    AddScript("DELETE", columns => ScriptTemplates.Delete(fullName, columns));
+                    AddScript("INSERT", columns => ScriptTemplates.Insert(dialect, fullName, columns));
+                    AddScript("UPDATE", columns => ScriptTemplates.Update(dialect, fullName, columns));
+                    AddScript("DELETE", columns => ScriptTemplates.Delete(dialect, fullName, columns));
                 }
                 menu.Items.Add(scriptAs);
                 if (node.Kind == NodeKind.Table)
@@ -1448,14 +1449,18 @@ public partial class MainWindow : Window
 
             case NodeKind.Procedure:
                 Add("Generar script CREATE", () => _ = ScriptCreateAsync(node));
-                Add("Generar llamada (CALL)", () =>
-                    AddTab(node.Profile, node.Database).SetText($"CALL {Db.QuoteId(node.Database!)}.{Db.QuoteId(node.Name!)}();\n"));
+                // SQL Server ejecuta los procedimientos con EXEC; MySQL, con CALL.
+                bool exec = node.Profile.Kind == DbKind.SqlServer;
+                Add(exec ? "Generar llamada (EXEC)" : "Generar llamada (CALL)", () =>
+                    AddTab(node.Profile, node.Database).SetText(exec
+                        ? $"EXEC {Db.FullName(node.Profile, node.Database, node.Name!)};\n"
+                        : $"CALL {Db.FullName(node.Profile, node.Database, node.Name!)}();\n"));
                 break;
 
             case NodeKind.Function:
                 Add("Generar script CREATE", () => _ = ScriptCreateAsync(node));
                 Add("Generar llamada (SELECT)", () =>
-                    AddTab(node.Profile, node.Database).SetText($"SELECT {Db.QuoteId(node.Database!)}.{Db.QuoteId(node.Name!)}();\n"));
+                    AddTab(node.Profile, node.Database).SetText($"SELECT {Db.FullName(node.Profile, node.Database, node.Name!)}();\n"));
                 break;
 
             default:
@@ -1664,7 +1669,7 @@ public partial class MainWindow : Window
                     tables.IsExpanded = true;
                     children.Add(tables);
                     children.Add(MakeFolder("Vistas", profile, objects.Where(o => o.IsView).Select(o => Leaf(NodeKind.View, o.Name, expandable: true)).ToList()));
-                    if (profile.Kind == DbKind.MySql)
+                    if (profile.Kind != DbKind.Sqlite)
                     {
                         children.Add(MakeFolder("Procedimientos", profile, routines.Where(r => !r.IsFunction).Select(r => Leaf(NodeKind.Procedure, r.Name)).ToList()));
                         children.Add(MakeFolder("Funciones", profile, routines.Where(r => r.IsFunction).Select(r => Leaf(NodeKind.Function, r.Name)).ToList()));

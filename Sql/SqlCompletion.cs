@@ -10,6 +10,12 @@ namespace MySmdb;
 public sealed class SchemaInfo
 {
     public Dictionary<string, List<(string Name, string Type)>> Tables { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Motor de la base: decide las comillas de los nombres que las necesitan (`nombre` o [nombre]).</summary>
+    public DbKind Kind { get; init; }
+
+    /// <summary>SQL Server: esquema de las tablas que no están en dbo (tabla → esquema); al insertarlas se antepone.</summary>
+    public Dictionary<string, string> Schemas { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -50,6 +56,22 @@ public static class SchemaCache
 
     private static async Task<SchemaInfo> LoadAsync(ConnectionProfile profile, string database)
     {
+        var schema = new SchemaInfo { Kind = profile.Kind };
+        if (profile.Kind == DbKind.SqlServer)
+        {
+            // Las tablas se buscan por su nombre sin esquema, que es como se suelen escribir (o tras "dbo.").
+            foreach (var row in await SqlServerCatalog.GetCompletionRowsAsync(profile, database))
+            {
+                if (!schema.Tables.TryGetValue(row[1]!, out var list))
+                {
+                    schema.Tables[row[1]!] = list = new();
+                    if (!string.Equals(row[0], "dbo", StringComparison.OrdinalIgnoreCase)) schema.Schemas[row[1]!] = row[0]!;
+                }
+                list.Add((row[2]!, row[3] ?? ""));
+            }
+            return schema;
+        }
+
         var rows = profile.Kind == DbKind.Sqlite
             ? await Db.QueryAsync(profile, null,
                 "SELECT m.name, p.name, p.type FROM sqlite_master m JOIN pragma_table_info(m.name) p " +
@@ -58,7 +80,6 @@ public static class SchemaCache
                 "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS " +
                 "WHERE TABLE_SCHEMA = @p0 ORDER BY TABLE_NAME, ORDINAL_POSITION", database);
 
-        var schema = new SchemaInfo();
         foreach (var row in rows)
         {
             if (!schema.Tables.TryGetValue(row[0]!, out var columns))
@@ -76,10 +97,17 @@ public sealed class SqlCompletionItem : ICompletionData
 {
     private static readonly Regex PlainIdentifier = new(@"^[A-Za-z_][A-Za-z0-9_$]*$");
 
-    public SqlCompletionItem(string text, CompletionKind kind, string? detail = null)
+    private readonly DbKind _dialect;
+    private readonly string? _schema;
+
+    /// <param name="dialect">Motor, para las comillas de los nombres que las necesitan.</param>
+    /// <param name="schema">SQL Server: esquema que se antepone a la tabla (las que no están en dbo).</param>
+    public SqlCompletionItem(string text, CompletionKind kind, string? detail = null, DbKind dialect = DbKind.MySql, string? schema = null)
     {
         Text = text;
         Kind = kind;
+        _dialect = dialect;
+        _schema = schema;
         Description = kind switch
         {
             CompletionKind.Table => "Tabla" + (detail != null ? $" · {detail}" : ""),
@@ -99,7 +127,7 @@ public sealed class SqlCompletionItem : ICompletionData
 
     public object Content => Kind switch
     {
-        CompletionKind.Table => $"{Text}    (tabla)",
+        CompletionKind.Table => $"{Text}    ({(_schema != null ? _schema + " · " : "")}tabla)",
         CompletionKind.Column => $"{Text}    (columna)",
         CompletionKind.Function => $"{Text}()",
         _ => Text,
@@ -107,11 +135,14 @@ public sealed class SqlCompletionItem : ICompletionData
 
     public void Complete(TextArea textArea, ISegment completionSegment, EventArgs insertionRequestEventArgs)
     {
-        // Nombres con espacios, guiones o que coinciden con palabras clave, entre acentos graves.
-        string insert = Kind is CompletionKind.Table or CompletionKind.Column
-                        && (!PlainIdentifier.IsMatch(Text) || SqlKeywords.IsKeyword(Text))
-            ? Db.QuoteId(Text)
-            : Text;
+        // Nombres con espacios, guiones o que coinciden con palabras clave, entre comillas del motor (`nombre` o [nombre]).
+        string Quoted(string name) => !PlainIdentifier.IsMatch(name) || SqlKeywords.IsKeyword(name) ? Db.QuoteId(_dialect, name) : name;
+        string insert = Kind switch
+        {
+            CompletionKind.Table => (_schema != null ? Quoted(_schema) + "." : "") + Quoted(Text),
+            CompletionKind.Column => Quoted(Text),
+            _ => Text,
+        };
         if (Kind == CompletionKind.Function) insert += "(";
         textArea.Document.Replace(completionSegment, insert);
     }
@@ -120,14 +151,14 @@ public sealed class SqlCompletionItem : ICompletionData
 /// <summary>Qué sugerir según el texto alrededor del cursor.</summary>
 public static class SqlCompletion
 {
-    private const string Identifier = @"(?:`[^`]+`|[A-Za-z_][A-Za-z0-9_$]*)";
+    private const string Identifier = @"(?:`[^`]+`|\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_$]*)";
 
     // "FROM cliente c", "JOIN `db`.`pedido` AS p", "UPDATE cliente", ", producto pr" (listas del FROM).
     private static readonly Regex TableReference = new(
         $@"(?:\b(?:FROM|JOIN|UPDATE|INTO)\s+|,\s*)(?:{Identifier}\.)?(?<table>{Identifier})(?:\s+(?:AS\s+)?(?<alias>{Identifier}))?",
         RegexOptions.IgnoreCase);
 
-    private static string Unquote(string name) => name.Trim('`');
+    private static string Unquote(string name) => name.Trim('`', '[', ']');
 
     /// <summary>Tabla o alias → tabla, en la sentencia actual (entre el ';' anterior y el siguiente al cursor).</summary>
     public static Dictionary<string, string> TablesInStatement(string text, int caret, SchemaInfo schema)
@@ -164,7 +195,7 @@ public static class SqlCompletion
             var tables = TablesInStatement(text, caret, schema);
             string table = tables.TryGetValue(qualifier, out var real) ? real : qualifier;
             if (schema.Tables.TryGetValue(table, out var columns))
-                items.AddRange(columns.Select(c => new SqlCompletionItem(c.Name, CompletionKind.Column, $"{table} · {c.Type}")));
+                items.AddRange(columns.Select(c => new SqlCompletionItem(c.Name, CompletionKind.Column, $"{table} · {c.Type}", schema.Kind)));
             return items;
         }
 
@@ -175,9 +206,9 @@ public static class SqlCompletion
             foreach (string table in inStatement)
                 foreach (var column in schema.Tables[table])
                     if (seen.Add(column.Name))
-                        items.Add(new SqlCompletionItem(column.Name, CompletionKind.Column, $"{table} · {column.Type}"));
+                        items.Add(new SqlCompletionItem(column.Name, CompletionKind.Column, $"{table} · {column.Type}", schema.Kind));
             items.AddRange(schema.Tables.Keys.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
-                .Select(t => new SqlCompletionItem(t, CompletionKind.Table, $"{schema.Tables[t].Count} columnas")));
+                .Select(t => new SqlCompletionItem(t, CompletionKind.Table, $"{schema.Tables[t].Count} columnas", schema.Kind, schema.Schemas.GetValueOrDefault(t))));
         }
         items.AddRange(SqlKeywords.Functions.OrderBy(f => f).Select(f => new SqlCompletionItem(f, CompletionKind.Function)));
         items.AddRange(SqlKeywords.Keywords.Where(k => !SqlKeywords.Functions.Contains(k)).OrderBy(k => k)

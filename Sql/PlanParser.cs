@@ -114,6 +114,72 @@ public static class PlanParser
         return root;
     }
 
+    /// <summary>
+    /// SET SHOWPLAN_ALL de SQL Server: una fila por sentencia (Parent = 0) y una por cada operador, enlazadas
+    /// por NodeId y Parent. Los operadores traen filas y costo estimados.
+    /// </summary>
+    public static PlanNode? FromSqlServer(ResultSet result)
+    {
+        int Column(string name) => Array.FindIndex(result.Columns, c => c.Equals(name, StringComparison.OrdinalIgnoreCase));
+        int text = Column("StmtText"), statement = Column("StmtId"), id = Column("NodeId"), parent = Column("Parent"),
+            physical = Column("PhysicalOp"), logical = Column("LogicalOp"), argument = Column("Argument"),
+            rows = Column("EstimateRows"), cost = Column("TotalSubtreeCost"), type = Column("Type");
+        if (id < 0 || parent < 0 || physical < 0) return null;
+
+        string Cell(object?[] row, int index) => index < 0 || row[index] == null ? "" : CellText.Format(row[index]).Trim();
+        double? Value(object?[] row, int index) => index >= 0 && row[index] != null ? Convert.ToDouble(row[index], CultureInfo.InvariantCulture) : null;
+        string Shorten(string value, int max) => value.Length > max ? value[..(max - 1)] + "…" : value;
+
+        var nodes = new Dictionary<(string, long), PlanNode>();
+        var roots = new List<PlanNode>();
+        foreach (var row in result.Rows)
+        {
+            string operation = Cell(row, physical), logicalOperation = Cell(row, logical);
+            long parentId = Convert.ToInt64(row[parent] ?? 0L);
+            PlanNode node;
+            if (parentId == 0 && operation.Length == 0)
+            {
+                // La sentencia: su tipo (SELECT, INSERT...) y su primera línea.
+                node = new PlanNode
+                {
+                    Operation = Cell(row, type) is { Length: > 0 } kind ? kind : "Sentencia",
+                    Detail = Shorten(Cell(row, text).ReplaceLineEndings(" "), 140),
+                    Cost = Value(row, cost),
+                    Rows = Value(row, rows),
+                };
+                roots.Add(node);
+            }
+            else
+            {
+                string detail = string.Join(" · ", new[]
+                {
+                    logicalOperation.Length > 0 && !logicalOperation.Equals(operation, StringComparison.OrdinalIgnoreCase) ? logicalOperation : "",
+                    Shorten(Cell(row, argument), 160),
+                }.Where(s => s.Length > 0));
+                node = new PlanNode { Operation = operation, Detail = detail, Cost = Value(row, cost), Rows = Value(row, rows), Kind = ClassifySqlServer(operation, logicalOperation) };
+                if (nodes.TryGetValue((Cell(row, statement), parentId), out var above)) above.Children.Add(node);
+                else roots.Add(node);
+            }
+            nodes[(Cell(row, statement), Convert.ToInt64(row[id] ?? 0L))] = node;
+        }
+
+        // Las sentencias sin operadores (SET, DECLARE...) no aportan nada al diagrama.
+        var withPlan = roots.Where(r => r.Children.Count > 0).ToList();
+        return SingleRoot(withPlan.Count > 0 ? withPlan : roots);
+    }
+
+    private static PlanNodeKind ClassifySqlServer(string physical, string logical)
+    {
+        bool Has(string text) => physical.Contains(text, StringComparison.OrdinalIgnoreCase);
+
+        // Recorrer el índice agrupado entero es recorrer toda la tabla.
+        if (Has("Table Scan") || Has("Clustered Index Scan")) return PlanNodeKind.FullScan;
+        if (Has("Seek") || Has("Lookup") || Has("Index Scan")) return PlanNodeKind.Index;
+        if (Has("Nested Loops") || Has("Merge Join") || (Has("Hash Match") && logical.Contains("Join", StringComparison.OrdinalIgnoreCase))) return PlanNodeKind.Join;
+        if (Has("Sort") || Has("Spool") || Has("Aggregate") || Has("Hash Match") || Has("Top")) return PlanNodeKind.SortOrTemp;
+        return PlanNodeKind.Other;
+    }
+
     private static PlanNode? SingleRoot(List<PlanNode> roots)
     {
         if (roots.Count == 0) return null;

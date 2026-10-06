@@ -166,6 +166,7 @@
                         <ComboBox x:Name="TypeCombo" Margin="0,4" Width="140" SelectionChanged="TypeCombo_SelectionChanged">
                             <ComboBoxItem Content="MySQL"/>
                             <ComboBoxItem Content="SQLite"/>
+                            <ComboBoxItem Content="SQL Server"/>
                         </ComboBox>
                         <CheckBox x:Name="ProductionCheck" Content="Producción" Margin="20,0,0,0" VerticalAlignment="Center"
                                   Foreground="{DynamicResource Brush.ProdText}" FontWeight="SemiBold"
@@ -175,11 +176,11 @@
 
                 <Separator Margin="0,8"/>
 
-                <!-- Solo se muestran los campos del tipo elegido. En MySQL, el servidor y el túnel SSH van en
-                     pestañas para que la ventana no crezca; fuera quedan los datos comunes. -->
+                <!-- Solo se muestran los campos del tipo elegido. En MySQL y SQL Server, el servidor y el túnel SSH
+                     van en pestañas para que la ventana no crezca; fuera quedan los datos comunes. -->
                 <StackPanel x:Name="MySqlPanel">
                     <TabControl x:Name="ConnectionTabs" MinHeight="290">
-                        <TabItem Header="Servidor MySQL">
+                        <TabItem x:Name="ServerTab" Header="Servidor MySQL">
                             <Grid Margin="6,8,6,6">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="104"/>
@@ -191,27 +192,33 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
                                 <Label Content="Servidor:"/>
                                 <DockPanel Grid.Column="1">
-                                    <TextBox DockPanel.Dock="Right" x:Name="PortBox" Width="100" MaxLength="5" ToolTip="Puerto (3306 por defecto)"/>
+                                    <TextBox DockPanel.Dock="Right" x:Name="PortBox" Width="100" MaxLength="5" ToolTip="Puerto (3306 en MySQL, 1433 en SQL Server)"/>
                                     <Label DockPanel.Dock="Right" Content="Puerto:" Padding="10,0,6,0"/>
                                     <TextBox x:Name="HostBox" ToolTip="Nombre o dirección IP del servidor"/>
                                 </DockPanel>
 
-                                <Label Grid.Row="1" Content="Usuario:"/>
-                                <TextBox Grid.Row="1" Grid.Column="1" x:Name="UserBox"/>
+                                <!-- Solo SQL Server -->
+                                <CheckBox Grid.Row="1" Grid.Column="1" x:Name="WindowsAuthCheck" Content="Autenticación de Windows" Margin="0,4,0,2"
+                                          Visibility="Collapsed" Checked="WindowsAuth_Changed" Unchecked="WindowsAuth_Changed"
+                                          ToolTip="Entrar con tu usuario de Windows, sin usuario ni contraseña de SQL Server"/>
 
-                                <Label Grid.Row="2" Content="Contraseña:"/>
-                                <PasswordBox Grid.Row="2" Grid.Column="1" x:Name="PasswordBox" Margin="0,4"/>
+                                <Label Grid.Row="2" Content="Usuario:"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="UserBox"/>
 
-                                <Label Grid.Row="3" Content="Base de datos:"/>
-                                <TextBox Grid.Row="3" Grid.Column="1" x:Name="DatabaseBox" ToolTip="Opcional: base de datos inicial"/>
+                                <Label Grid.Row="3" Content="Contraseña:"/>
+                                <PasswordBox Grid.Row="3" Grid.Column="1" x:Name="PasswordBox" Margin="0,4"/>
 
-                                <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TunnelHint" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"
+                                <Label Grid.Row="4" Content="Base de datos:"/>
+                                <TextBox Grid.Row="4" Grid.Column="1" x:Name="DatabaseBox" ToolTip="Opcional: base de datos inicial"/>
+
+                                <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TunnelHint" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"
                                            Foreground="{DynamicResource Brush.SecondaryText}"
-                                           Text="Túnel SSH activado: «Servidor» y «Puerto» son los de la base vistos desde el servidor SSH (normalmente 127.0.0.1 y 3306)."/>
+                                           Text="Túnel SSH activado: «Servidor» y «Puerto» son los de la base vistos desde el servidor SSH (normalmente 127.0.0.1 y el puerto de la base)."/>
                             </Grid>
                         </TabItem>
 

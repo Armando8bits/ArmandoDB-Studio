@@ -20,12 +20,14 @@ public partial class ConnectionDialog : Window
         Loaded += (_, _) =>
         {
             if (IsSqlite) FileBox.Focus();
-            else if (PasswordBox.Password.Length == 0 && SavedList.SelectedItem != null) PasswordBox.Focus();
+            else if (PasswordBox.Password.Length == 0 && SavedList.SelectedItem != null && PasswordBox.IsEnabled) PasswordBox.Focus();
             else HostBox.Focus();
         };
     }
 
+    // Orden del desplegable de tipo: MySQL, SQLite, SQL Server.
     private bool IsSqlite => TypeCombo.SelectedIndex == 1;
+    private bool IsSqlServer => TypeCombo.SelectedIndex == 2;
 
     private ConnectionProfile? Selected => SavedList.SelectedItem as ConnectionProfile;
 
@@ -89,7 +91,10 @@ public partial class ConnectionDialog : Window
         DeleteButton.IsEnabled = saved != null;
 
         NameBox.Text = p.Alias ?? "";
-        TypeCombo.SelectedIndex = p.Kind == DbKind.Sqlite ? 1 : 0;
+        _filling = true;
+        TypeCombo.SelectedIndex = p.Kind switch { DbKind.Sqlite => 1, DbKind.SqlServer => 2, _ => 0 };
+        WindowsAuthCheck.IsChecked = p.IntegratedSecurity;
+        _filling = false;
         FileBox.Text = p.FilePath ?? "";
         HostBox.Text = p.Host;
         PortBox.Text = p.Port.ToString();
@@ -149,14 +154,35 @@ public partial class ConnectionDialog : Window
     {
         // Se dispara durante la carga del XAML, antes de que existan los demás controles.
         if (SqlitePanel == null) return;
+        if (!_filling)
+        {
+            // Al cambiar de motor a mano, el puerto y el usuario por defecto pasan a los del nuevo (si no se tocaron).
+            var (port, otherPort, user, otherUser) = IsSqlServer ? ("1433", "3306", "sa", "root") : ("3306", "1433", "root", "sa");
+            if (PortBox.Text.Trim() == otherPort) PortBox.Text = port;
+            if (UserBox.Text.Trim() == otherUser) UserBox.Text = user;
+        }
         UpdateTypePanels();
         SetStatus("", null);
+    }
+
+    private void WindowsAuth_Changed(object sender, RoutedEventArgs e)
+    {
+        if (SqlitePanel == null) return;   // durante la carga del XAML
+        UpdateTypePanels();
     }
 
     private void UpdateTypePanels()
     {
         MySqlPanel.Visibility = IsSqlite ? Visibility.Collapsed : Visibility.Visible;
         SqlitePanel.Visibility = IsSqlite ? Visibility.Visible : Visibility.Collapsed;
+
+        ServerTab.Header = IsSqlServer ? "Servidor SQL Server" : "Servidor MySQL";
+        WindowsAuthCheck.Visibility = IsSqlServer ? Visibility.Visible : Visibility.Collapsed;
+        // Con autenticación de Windows no hay usuario ni contraseña que escribir.
+        UserBox.IsEnabled = PasswordBox.IsEnabled = !(IsSqlServer && WindowsAuthCheck.IsChecked == true);
+        HostBox.ToolTip = IsSqlServer
+            ? "Nombre o IP del servidor. Con instancia: SERVIDOR\\INSTANCIA (el puerto no se usa). LocalDB: (localdb)\\MSSQLLocalDB"
+            : "Nombre o dirección IP del servidor";
         UpdateSshState();
     }
 
@@ -227,11 +253,14 @@ public partial class ConnectionDialog : Window
             return Invalid("Indica el servidor (por ejemplo, localhost).", HostBox);
         if (!uint.TryParse(PortBox.Text.Trim(), out uint port) || port == 0 || port > 65535)
             return Invalid("El puerto debe ser un número entre 1 y 65535.", PortBox);
-        if (string.IsNullOrWhiteSpace(UserBox.Text))
+        bool windowsAuth = IsSqlServer && WindowsAuthCheck.IsChecked == true;
+        if (!windowsAuth && string.IsNullOrWhiteSpace(UserBox.Text))
             return Invalid("Indica el usuario.", UserBox);
 
         var profile = new ConnectionProfile
         {
+            Kind = IsSqlServer ? DbKind.SqlServer : DbKind.MySql,
+            IntegratedSecurity = windowsAuth,
             Alias = alias,
             IsProduction = ProductionCheck.IsChecked == true,
             Host = HostBox.Text.Trim(),
@@ -294,7 +323,7 @@ public partial class ConnectionDialog : Window
     private void Store(ConnectionProfile profile)
     {
         string? previous = Selected?.Name;
-        ProfileStore.Save(profile, profile.Kind == DbKind.MySql && RememberCheck.IsChecked == true, replaces: previous);
+        ProfileStore.Save(profile, profile.Kind != DbKind.Sqlite && RememberCheck.IsChecked == true, replaces: previous);
         if (previous != null)
             SessionStore.Rename(previous, profile.Name);
     }

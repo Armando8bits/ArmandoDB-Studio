@@ -27,9 +27,14 @@ public static class Snippets
         foreach (var (k, template) in All)
         {
             if (!k.Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
-            return kind == DbKind.Sqlite
-                ? template.Replace("INT PRIMARY KEY AUTO_INCREMENT", "INTEGER PRIMARY KEY AUTOINCREMENT")
-                : template;
+            return kind switch
+            {
+                DbKind.Sqlite => template.Replace("INT PRIMARY KEY AUTO_INCREMENT", "INTEGER PRIMARY KEY AUTOINCREMENT"),
+                // SQL Server no tiene LIMIT ni AUTO_INCREMENT: TOP e IDENTITY.
+                DbKind.SqlServer => template.Replace("SELECT *\nFROM |\nLIMIT 100;", "SELECT TOP 100 *\nFROM |;")
+                    .Replace("INT PRIMARY KEY AUTO_INCREMENT", "INT IDENTITY(1,1) PRIMARY KEY"),
+                _ => template,
+            };
         }
         return null;
     }

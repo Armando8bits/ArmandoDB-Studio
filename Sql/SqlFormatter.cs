@@ -20,9 +20,9 @@ public static class SqlFormatter
         public bool Is(string word) => Kind == Kind.Word && Text.Equals(word, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static readonly Regex DelimiterDirective = new(@"^\s*DELIMITER\s", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+    private static readonly Regex DelimiterDirective = new(@"^\s*(DELIMITER\s|GO\s*$)", RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
-    /// <summary>Los scripts con DELIMITER (procedimientos, triggers de MySQL) no se formatean.</summary>
+    /// <summary>Los scripts con DELIMITER (procedimientos, triggers de MySQL) o con lotes GO (SQL Server) no se formatean.</summary>
     public static bool CanFormat(string sql) => !DelimiterDirective.IsMatch(sql);
 
     // ---------- Separación en piezas ----------
@@ -68,6 +68,24 @@ public static class SqlFormatter
                 }
                 i = Math.Min(i, sql.Length);
                 tokens.Add(new Token(c == '\'' ? Kind.String : Kind.Quoted, sql[start..i]));
+                continue;
+            }
+            // [identificador] de SQL Server (SQLite también lo admite); "]]" es un corchete dentro del nombre.
+            if (c == '[' && !mysql)
+            {
+                i++;
+                while (i < sql.Length)
+                {
+                    if (sql[i] == ']')
+                    {
+                        if (i + 1 < sql.Length && sql[i + 1] == ']') { i += 2; continue; }
+                        i++;
+                        break;
+                    }
+                    if (sql[i] == '\n') break;   // un corchete suelto no se traga el resto del script
+                    i++;
+                }
+                tokens.Add(new Token(Kind.Quoted, sql[start..i]));
                 continue;
             }
             if (char.IsDigit(c) || (c == '.' && char.IsDigit(next)))

@@ -246,8 +246,8 @@ public static class DataImporter
         await conn.OpenAsync(token);
         await using var transaction = await conn.BeginTransactionAsync(token);
 
-        string target = profile.Kind == DbKind.Sqlite ? Db.QuoteId(table) : $"{Db.QuoteId(database)}.{Db.QuoteId(table)}";
-        string columns = string.Join(", ", mapping.Select(m => Db.QuoteId(m.Column)));
+        string target = Db.FullName(profile, database, table);
+        string columns = string.Join(", ", mapping.Select(m => Db.QuoteId(profile.Kind, m.Column)));
         // Pocas filas por sentencia si la tabla tiene muchas columnas (límite de parámetros de SQLite).
         int batchSize = Math.Clamp(900 / mapping.Count, 1, 100);
 

@@ -317,7 +317,7 @@ public partial class QueryTab : UserControl
         string text = selection ? Editor.SelectedText : Editor.Text;
         if (string.IsNullOrWhiteSpace(text)) return null;
         if (!SqlFormatter.CanFormat(text))
-            return "No se formatean scripts con DELIMITER (procedimientos o triggers): su cuerpo se dejaría igual de todos modos.";
+            return "No se formatean scripts con DELIMITER o con lotes GO (procedimientos, triggers): selecciona solo la consulta que quieras formatear.";
 
         string formatted = SqlFormatter.Format(text, Profile.Kind == DbKind.MySql);
         if (selection)
@@ -443,7 +443,7 @@ public partial class QueryTab : UserControl
 
     public async Task ChangeDatabaseAsync(string database)
     {
-        if (IsRunning || database == CurrentDatabase || Profile.Kind != DbKind.MySql) return;
+        if (IsRunning || database == CurrentDatabase || Profile.Kind == DbKind.Sqlite) return;
         try
         {
             if (_conn?.State == System.Data.ConnectionState.Open)
@@ -485,12 +485,11 @@ public partial class QueryTab : UserControl
         string sql = hasSelection ? Editor.SelectedText : Editor.Text;
         int lineOffset = hasSelection ? Editor.Document.GetLineByOffset(Editor.SelectionStart).LineNumber - 1 : 0;
 
-        bool mysql = Profile.Kind == DbKind.MySql;
-        var statements = SqlSplitter.Split(sql, mysql);
+        var statements = SqlSplitter.Split(sql, Profile.Kind);
         if (statements.Count > 0) return (statements, lineOffset);
 
         emptyMessageView.Text = "No hay ninguna sentencia que ejecutar: el texto está vacío o solo contiene comentarios.\n"
-            + (mysql ? "En MySQL, '#' y '-- '" : "En SQLite, '--'")
+            + Profile.Kind switch { DbKind.MySql => "En MySQL, '#' y '-- '", DbKind.SqlServer => "En SQL Server, '--'", _ => "En SQLite, '--'" }
             + " comentan el resto de la línea, y /* ... */ comenta un bloque.";
         ResultTabs.SelectedIndex = emptyMessageTab;
         return null;
@@ -503,7 +502,11 @@ public partial class QueryTab : UserControl
         var (statements, lineOffset) = script;
 
         var settings = AppSettings.Current;
-        var warnings = SqlSafety.Review(statements, lineOffset, Profile.IsProduction,
+        // En SQL Server lo que se ejecuta son lotes; para revisarlos se miran sus sentencias una a una.
+        var toReview = Profile.Kind != DbKind.SqlServer ? statements
+            : statements.SelectMany(batch => SqlSplitter.Split(batch.Text, mysql: false)
+                .Select(s => new SqlStatement(s.Text, batch.Line + s.Line - 1))).ToList();
+        var warnings = SqlSafety.Review(toReview, lineOffset, Profile.IsProduction,
             settings.ConfirmDangerous, settings.ConfirmProductionWrites);
         if (warnings.Count > 0 && !ConfirmDangerous(warnings))
         {
@@ -532,6 +535,7 @@ public partial class QueryTab : UserControl
             await Task.Run(async () =>
             {
                 await EnsureOpenAsync(token);
+                _serverMessages = log;   // PRINT y avisos de SQL Server van al registro, en su orden
                 try
                 {
                     foreach (var statement in statements)
@@ -544,7 +548,7 @@ public partial class QueryTab : UserControl
                         catch (DbException ex) when (!token.IsCancellationRequested)
                         {
                             // En una sola línea: la vista de texto pinta en rojo las líneas que empiezan por "Error".
-                            log.AppendLine($"Error {Db.ErrorCode(ex)}, línea {statement.Line + lineOffset}: {ex.Message.ReplaceLineEndings(" ")}");
+                            log.AppendLine($"Error {Db.ErrorCode(ex)}, línea {ErrorLine(ex, statement.Line + lineOffset)}: {ex.Message.ReplaceLineEndings(" ")}");
                             failed = true;
                             break;
                         }
@@ -552,6 +556,7 @@ public partial class QueryTab : UserControl
                 }
                 finally
                 {
+                    _serverMessages = null;
                     // Un USE dentro del script cambia la base de datos de la sesión.
                     database = await ReadCurrentDatabaseAsync() ?? database;
                 }
@@ -701,6 +706,8 @@ public partial class QueryTab : UserControl
     /// </summary>
     private async Task<(string Text, PlanNode? Root)> PlanAsync(string sql, CancellationToken token)
     {
+        if (Profile.Kind == DbKind.SqlServer) return await PlanSqlServerAsync(sql, token);
+
         // Un USE previo cambia la base con la que se explican las siguientes sentencias, así que se aplica.
         if (UseStatement.IsMatch(sql))
         {
@@ -728,6 +735,51 @@ public partial class QueryTab : UserControl
             // MariaDB y MySQL < 8.0.16 no tienen FORMAT=TREE. Si la sentencia es la que falla, el EXPLAIN clásico dará el error real.
             return Interpret(await QueryAsync("EXPLAIN " + sql, token));
         }
+    }
+
+    /// <summary>
+    /// SQL Server: con SET SHOWPLAN_ALL ON el servidor no ejecuta el lote; devuelve su plan estimado, una fila por paso.
+    /// </summary>
+    private async Task<(string Text, PlanNode? Root)> PlanSqlServerAsync(string batch, CancellationToken token)
+    {
+        async Task SetAsync(string value, CancellationToken cancel)
+        {
+            await using var set = _conn!.CreateCommand();
+            set.CommandText = "SET SHOWPLAN_ALL " + value;   // tiene que ir solo en su lote
+            await set.ExecuteNonQueryAsync(cancel);
+        }
+
+        var plan = new ResultSet { Columns = Array.Empty<string>() };
+        await SetAsync("ON", token);
+        try
+        {
+            await using var cmd = _conn!.CreateCommand();
+            cmd.CommandText = batch;
+            cmd.CommandTimeout = 0;
+            await using var reader = await cmd.ExecuteReaderAsync(token);
+            // Un conjunto de filas por sentencia del lote, todos con las mismas columnas.
+            do
+            {
+                if (reader.FieldCount == 0) continue;
+                if (plan.Columns.Length == 0) plan = new ResultSet { Columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray() };
+                while (await reader.ReadAsync(token))
+                {
+                    var row = new object?[reader.FieldCount];
+                    for (int i = 0; i < row.Length; i++) row[i] = ReadValue(reader, i);
+                    plan.Rows.Add(row);
+                }
+            } while (await reader.NextResultAsync(token));
+        }
+        finally
+        {
+            // Sin esto la sesión de la pestaña seguiría sin ejecutar nada.
+            try { await SetAsync("OFF", CancellationToken.None); } catch { }
+        }
+
+        int text = Array.FindIndex(plan.Columns, c => c.Equals("StmtText", StringComparison.OrdinalIgnoreCase));
+        if (text < 0 || plan.Rows.Count == 0) return ("(sin plan)", null);
+        // StmtText ya viene sangrado como árbol ("  |--Clustered Index Scan(...)").
+        return (string.Join(Environment.NewLine, plan.Rows.Select(r => CellText.Format(r[text]).ReplaceLineEndings(" "))), PlanParser.FromSqlServer(plan));
     }
 
     /// <summary>Texto y árbol de un resultado de EXPLAIN, sea cual sea su forma.</summary>
@@ -879,17 +931,29 @@ public partial class QueryTab : UserControl
         if (_conn != null)
             await _conn.DisposeAsync();
         _conn = Profile.CreateConnection(CurrentDatabase);
+        if (_conn is Microsoft.Data.SqlClient.SqlConnection sqlServer)
+            sqlServer.InfoMessage += (_, e) => _serverMessages?.AppendLine(e.Message);
         await _conn.OpenAsync(token);
     }
+
+    /// <summary>Registro de la ejecución en curso, donde se anotan los mensajes del servidor (PRINT de SQL Server).</summary>
+    private StringBuilder? _serverMessages;
+
+    /// <summary>
+    /// Línea del editor donde está el error. SQL Server indica la línea dentro del lote; los demás, nada:
+    /// se usa la primera línea de la sentencia.
+    /// </summary>
+    private static int ErrorLine(DbException ex, int statementLine) =>
+        ex is Microsoft.Data.SqlClient.SqlException { LineNumber: > 0 } sql ? statementLine + sql.LineNumber - 1 : statementLine;
 
     private async Task<string?> ReadCurrentDatabaseAsync()
     {
         try
         {
             // SQLite no cambia de base: siempre es "main".
-            if (Profile.Kind != DbKind.MySql || _conn?.State != System.Data.ConnectionState.Open) return null;
+            if (Profile.Kind == DbKind.Sqlite || _conn?.State != System.Data.ConnectionState.Open) return null;
             await using var cmd = _conn.CreateCommand();
-            cmd.CommandText = "SELECT DATABASE()";
+            cmd.CommandText = Profile.Kind == DbKind.SqlServer ? "SELECT DB_NAME()" : "SELECT DATABASE()";
             return await cmd.ExecuteScalarAsync() as string;
         }
         catch
