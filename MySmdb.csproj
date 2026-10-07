@@ -15,8 +15,10 @@
     Ejecutar las pruebas automáticas (no hace falta cerrar la aplicación):
         dotnet test tests\MySmdb.Tests
 
-    Generar el instalador (Setup.exe con .NET incluido, para equipos sin .NET; requiere Inno Setup 6):
+    Generar el instalador, uno de los dos es suficiente (Setup.exe con .NET incluido, para equipos sin .NET; requiere Inno Setup 6):
         .\installer\build-installer.ps1
+        powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1
+
     El resultado queda en installer\Output. La versión sale de <Version> más abajo.
   -->
 
