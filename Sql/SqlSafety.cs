@@ -11,6 +11,13 @@ public static class SqlSafety
     private static readonly Regex Write = new(
         @"^\s*(INSERT|REPLACE|UPDATE|DELETE|MERGE|ALTER|CREATE|DROP|TRUNCATE|RENAME|GRANT|REVOKE|LOAD|CALL|EXEC|EXECUTE)\b", RegexOptions.IgnoreCase);
 
+    // Lo que no es código: cadenas, nombres entre comillas y comentarios. Una palabra WHERE ahí dentro no cuenta.
+    private static readonly Regex NotCode = new(
+        @"'(?:[^'\\]|\\.|'')*'|""(?:[^""\\]|\\.|"""")*""|`[^`]*`|\[[^\]]*\]|--[^\n]*|/\*.*?\*/", RegexOptions.Singleline);
+
+    /// <summary>La sentencia sin cadenas ni comentarios, para buscar palabras clave solo en el código.</summary>
+    private static string CodeOnly(string sql) => NotCode.Replace(sql, " ");
+
     /// <summary>
     /// Avisos, uno por sentencia.
     /// <paramref name="dangerous"/>: UPDATE/DELETE sin WHERE, DROP y TRUNCATE, en cualquier conexión.
@@ -24,10 +31,11 @@ public static class SqlSafety
         foreach (var statement in statements)
         {
             string text = statement.Text;
+            string code = CodeOnly(text);
             string? reason =
-                dangerous && UpdateOrDelete.IsMatch(text) && !Where.IsMatch(text) ? "sin WHERE: afecta a TODAS las filas"
-                : dangerous && DropOrTruncate.IsMatch(text) ? "elimina objetos o datos de forma irreversible"
-                : production && productionWrites && Write.IsMatch(text) ? "modifica datos o estructura"
+                dangerous && UpdateOrDelete.IsMatch(code) && !Where.IsMatch(code) ? "sin WHERE: afecta a TODAS las filas"
+                : dangerous && DropOrTruncate.IsMatch(code) ? "elimina objetos o datos de forma irreversible"
+                : production && productionWrites && Write.IsMatch(code) ? "modifica datos o estructura"
                 : null;
             if (reason == null) continue;
 

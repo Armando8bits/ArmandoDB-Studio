@@ -64,8 +64,9 @@ public static class RecoveryStore
         string signature = string.Join("\u0001", queries.Select(q => $"{q.Title}\u0002{q.Connection}\u0002{q.FilePath}\u0002{q.Text}"));
         if (!force && signature == _lastWritten) return;
 
-        if (Directory.Exists(Folder))
-            foreach (string old in Directory.GetFiles(Folder)) File.Delete(old);
+        // Primero se escriben las copias nuevas y solo después se quitan las que sobran: así, si el equipo se
+        // apaga a mitad, nunca hay un momento sin copia.
+        var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (queries.Count > 0) Directory.CreateDirectory(Folder);
         for (int i = 0; i < queries.Count; i++)
         {
@@ -78,8 +79,12 @@ public static class RecoveryStore
             string header = $"-- Copia de recuperación de {App.Name} ({DateTime.Now:yyyy-MM-dd HH:mm:ss})\n" +
                             $"-- Conexión: {query.Connection}\n" +
                             $"-- Origen: {query.FilePath ?? "consulta sin guardar"}\n\n";
-            File.WriteAllText(Path.Combine(Folder, $"{i + 1:00} {name}.sql"), (header + query.Text).ReplaceLineEndings(), new UTF8Encoding(false));
+            string file = Path.Combine(Folder, $"{i + 1:00} {name}.sql");
+            File.WriteAllText(file, (header + query.Text).ReplaceLineEndings(), new UTF8Encoding(false));
+            written.Add(file);
         }
+        if (Directory.Exists(Folder))
+            foreach (string old in Directory.GetFiles(Folder).Where(f => !written.Contains(f))) File.Delete(old);
         _lastWritten = signature;
     }
 
@@ -89,6 +94,7 @@ public static class RecoveryStore
         try
         {
             _provider = null;
+            _lastWritten = "";   // ya no hay nada escrito con lo que comparar
             if (Directory.Exists(Folder)) Directory.Delete(Folder, recursive: true);
         }
         catch

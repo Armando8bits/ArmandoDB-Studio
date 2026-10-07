@@ -23,6 +23,10 @@ public partial class App : Application
         {
             if (_dataFolder != null) return _dataFolder;
 
+            // Carpeta alternativa: las pruebas automáticas la usan para no tocar los datos reales del usuario.
+            string? custom = Environment.GetEnvironmentVariable("ARMANDODB_DATA");
+            if (!string.IsNullOrWhiteSpace(custom)) return _dataFolder = custom;
+
             string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             string folder = Path.Combine(appData, Name);
             string legacy = Path.Combine(appData, "MySmdb");

@@ -611,13 +611,23 @@ public partial class MainWindow : Window
                         LayoutGroups(_main);
                     }
                     _activeGroup = _main.Groups[Math.Clamp(saved.Group, 0, _main.Groups.Count - 1)];
-                    AddTab(profile, saved.Database ?? defaultDatabase).LoadFile(saved.Path);
+                    var tab = AddTab(profile, saved.Database ?? defaultDatabase);
+                    try
+                    {
+                        tab.LoadFile(saved.Path);
+                    }
+                    catch
+                    {
+                        // Un archivo ilegible no impide restaurar el resto, y no deja una pestaña vacía de recuerdo.
+                        CloseTab(_tabs[^1]);
+                        continue;
+                    }
                     _tabs[^1].Pinned = saved.Pinned;
                     restored = true;
                 }
                 catch
                 {
-                    // Un archivo ilegible no impide restaurar el resto; su pestaña queda vacía.
+                    // Cualquier otro fallo con este archivo: se sigue con los demás.
                 }
             }
         }
@@ -1115,15 +1125,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Divide en dos grupos la zona de la pestaña actual (o cambia la orientación si ya está dividida).
-    /// La pestaña actual pasa al grupo nuevo; si es la única, el grupo nuevo abre una consulta en blanco.
-    /// </summary>
-    /// <summary>
     /// ¿Tiene efecto dividir la zona en esa orientación? No, si ya está dividida así; sí, si no está dividida
     /// o lo está en la otra (entonces cambia la orientación).
     /// </summary>
     private static bool CanSplit(GroupArea area, bool sideBySide) => !(area.Groups.Count > 1 && area.SideBySide == sideBySide);
 
+    /// <summary>
+    /// Divide en dos grupos la zona de la pestaña actual (botones y menús), o cambia la orientación si ya está dividida.
+    /// </summary>
     private void Split(bool sideBySide)
     {
         SplitCore(sideBySide);
@@ -1431,8 +1440,9 @@ public partial class MainWindow : Window
             UpdateHeader(entry);
             StyleHeader(entry);   // la pestaña puede haber cambiado a (o desde) una conexión de producción
         }
-        if (tab == Current) UpdateChrome();
-        else UpdateFloatingWindows();
+        // Siempre todo: la pestaña puede no ser la actual y aun así estar a la vista (en la ventana principal
+        // mientras el foco está en una flotante, o al revés), y su barra de estado debe reflejar el cambio.
+        UpdateChrome();
     }
 
     /// <summary>Título y línea de estado de cada ventana flotante, según su pestaña visible.</summary>
@@ -1536,6 +1546,12 @@ public partial class MainWindow : Window
         var profile = current?.Profile ?? _databases.Keys.First();
         foreach (string path in dialog.FileNames)
         {
+            // Si ya está abierto, se va a su pestaña: dos pestañas del mismo archivo se pisarían al guardar.
+            if (_tabs.FirstOrDefault(t => string.Equals(t.Tab.FilePath, path, StringComparison.OrdinalIgnoreCase)) is { } open)
+            {
+                Select(open);
+                continue;
+            }
             try
             {
                 AddTab(profile, current?.CurrentDatabase).LoadFile(path);
@@ -1744,6 +1760,12 @@ public partial class MainWindow : Window
             {
                 try { File.Delete(path); } catch { }   // un archivo a medias no sirve como copia
             }
+            catch
+            {
+                // Tampoco si se interrumpió por un error: que nadie lo tome por una copia completa.
+                try { File.Delete(path); } catch { }
+                throw;
+            }
         }
         catch (Exception ex)
         {
@@ -1868,6 +1890,8 @@ public partial class MainWindow : Window
             {
                 case NodeKind.Server:
                     var names = await Db.ListDatabasesAsync(node.Profile);
+                    // Si se desconectó mientras cargaba, no se la vuelve a dar por abierta.
+                    if (!_databases.ContainsKey(node.Profile)) return;
                     _databases[node.Profile] = names;
                     foreach (string name in names)
                         children.Add(MakeNode(name, new Node(NodeKind.Database, node.Profile, name), expandable: true));

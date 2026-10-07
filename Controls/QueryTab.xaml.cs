@@ -65,33 +65,34 @@ public partial class QueryTab : UserControl
     public event Action<QueryTab>? StateChanged;
 
     /// <summary>
-    /// El resaltado base es el de T-SQL; aquí se le añade lo propio de MySQL:
-    /// comentarios con '#' e identificadores entre acentos graves.
+    /// El resaltado base es el de T-SQL, compartido por todas las pestañas; aquí se le añaden los identificadores
+    /// entre acentos graves. Los comentarios con '#' son solo de MySQL y van por pestaña (ver ApplyDialect):
+    /// en SQL Server y Sybase '#' es el prefijo de las tablas temporales.
     /// </summary>
     static QueryTab()
     {
         var definition = HighlightingManager.Instance.GetDefinition("TSQL");
         if (definition == null) return;
 
-        var comment = definition.GetNamedColor("Comment")
-            ?? new HighlightingColor { Foreground = new SimpleHighlightingBrush(Colors.Green) };
-        var spans = definition.MainRuleSet.Spans;
-        spans.Add(new HighlightingSpan
-        {
-            StartExpression = new Regex("#"),
-            EndExpression = new Regex("$"),
-            SpanColor = comment,
-            SpanColorIncludesStart = true,
-            SpanColorIncludesEnd = true,
-            RuleSet = new HighlightingRuleSet(),
-        });
-        // Sin color propio: evita que un '#' o una palabra clave dentro de `nombre` se resalten.
-        spans.Add(new HighlightingSpan
+        // Sin color propio: evita que una palabra clave dentro de `nombre` se resalte.
+        definition.MainRuleSet.Spans.Add(new HighlightingSpan
         {
             StartExpression = new Regex("`"),
             EndExpression = new Regex("`"),
             RuleSet = new HighlightingRuleSet(),
         });
+    }
+
+    private readonly HashCommentColorizer _hashComments = new();
+
+    /// <summary>Ajusta el resaltado al motor de la conexión: los comentarios con '#' solo en MySQL.</summary>
+    private void ApplyDialect()
+    {
+        var transformers = Editor.TextArea.TextView.LineTransformers;
+        bool wanted = Profile.Kind == DbKind.MySql, present = transformers.Contains(_hashComments);
+        if (wanted && !present) transformers.Add(_hashComments);
+        else if (!wanted && present) transformers.Remove(_hashComments);
+        Editor.TextArea.TextView.Redraw();
     }
 
     public QueryTab(ConnectionProfile profile, string? database, string defaultTitle)
@@ -122,6 +123,7 @@ public partial class QueryTab : UserControl
         }
         ApplyFont();
         ApplyTheme();
+        ApplyDialect();
         _filterTimer.Tick += (_, _) => ApplyResultFilter();
         PlanLegend.Content = PlanDiagram.Legend();
         PlanAsDiagram.IsChecked = AppSettings.Current.PlanAsDiagram;
@@ -152,9 +154,12 @@ public partial class QueryTab : UserControl
         };
         Editor.TextArea.TextEntered += (_, e) =>
         {
+            // Con las sugerencias automáticas desactivadas no aparece nada al escribir, tampoco tras un punto
+            // (Ctrl+Espacio sigue funcionando).
+            if (!AppSettings.Current.AutoCompleteEnabled) return;
             if (e.Text == ".")
                 ShowCompletion(forced: true);
-            else if (AppSettings.Current.AutoCompleteEnabled && _completion == null && e.Text.Length == 1
+            else if (_completion == null && e.Text.Length == 1
                      && (char.IsLetter(e.Text[0]) || e.Text[0] == '_'))
                 ShowCompletion(forced: false);
         };
@@ -360,7 +365,8 @@ public partial class QueryTab : UserControl
         string indent = lineText[..(lineText.Length - lineText.TrimStart().Length)];
         string text = template.Replace("\n", "\n" + indent);
         int cursor = text.IndexOf('|');
-        text = text.Remove(cursor, 1);
+        if (cursor < 0) cursor = text.Length;   // un fragmento sin marca deja el cursor al final
+        else text = text.Remove(cursor, 1);
 
         document.Replace(start, caret - start, text);
         Editor.CaretOffset = start + cursor;
@@ -399,9 +405,12 @@ public partial class QueryTab : UserControl
         StateChanged?.Invoke(this);
     }
 
+    /// <summary>Codificación con la que se leyó el archivo: se guarda con la misma, para no cambiársela a quien lo comparte.</summary>
+    private Encoding _fileEncoding = new UTF8Encoding(false);
+
     public void LoadFile(string path)
     {
-        Editor.Text = File.ReadAllText(path);
+        Editor.Text = TextFiles.Read(path, out _fileEncoding);
         Editor.Document.UndoStack.ClearAll();
         FilePath = path;
         IsDirty = false;
@@ -410,7 +419,9 @@ public partial class QueryTab : UserControl
 
     public void SaveFile(string path)
     {
-        File.WriteAllText(path, Editor.Text, new UTF8Encoding(false));
+        // Si el texto ya no cabe en la codificación original (se añadió, p. ej., un emoji a un archivo ANSI), UTF-8.
+        if (!TextFiles.CanEncode(Editor.Text, _fileEncoding)) _fileEncoding = new UTF8Encoding(false);
+        File.WriteAllText(path, Editor.Text, _fileEncoding);
         FilePath = path;
         IsDirty = false;
         StateChanged?.Invoke(this);
@@ -456,6 +467,7 @@ public partial class QueryTab : UserControl
         }
         Profile = profile;
         CurrentDatabase = database;
+        ApplyDialect();   // la otra conexión puede ser de otro motor
         StatusText = $"Pestaña cambiada a {profile.Name}.";
         StateChanged?.Invoke(this);
     }
@@ -808,6 +820,7 @@ public partial class QueryTab : UserControl
     private static readonly Regex Explainable = new(@"^\s*\(*\s*(SELECT|WITH|INSERT|UPDATE|DELETE|REPLACE|TABLE|VALUES)\b", RegexOptions.IgnoreCase);
     private static readonly Regex AlreadyExplain = new(@"^\s*(EXPLAIN|DESCRIBE|DESC)\b", RegexOptions.IgnoreCase);
     private static readonly Regex UseStatement = new(@"^\s*USE\b", RegexOptions.IgnoreCase);
+    private static readonly Regex ExecStatement = new(@"^\s*(EXEC|EXECUTE)\b", RegexOptions.IgnoreCase);
 
     /// <summary>Plan de una sentencia para la vista de diagrama: su árbol, o una nota/error si no lo tiene.</summary>
     private sealed record PlanSection(string Header, PlanNode? Root, string? Note, bool IsError);
@@ -909,6 +922,11 @@ public partial class QueryTab : UserControl
             await using var reader = await cmd.ExecuteReaderAsync(cancel);
             while (await reader.NextResultAsync(cancel)) { }
         }
+
+        // Un lote que llama a procedimientos no se envía: con NOEXEC el servidor no muestra su plan, y si esa
+        // opción no llegara a aplicarse, pedir el plan acabaría ejecutándolos.
+        if (SqlSplitter.SplitTSqlForReview(new SqlStatement(batch, 1)).Any(s => ExecStatement.IsMatch(s.Text)))
+            return ("(sin plan: el lote ejecuta procedimientos almacenados; su plan no se puede obtener sin ejecutarlos)", null);
 
         var plan = new StringBuilder();
         var previous = _serverMessages;
@@ -1255,6 +1273,7 @@ public partial class QueryTab : UserControl
     private void ShowResults(List<ResultSet> results)
     {
         _grids.Clear();
+        _columnAnchor.Clear();   // si no, las cuadrículas anteriores (y sus filas) seguirían en memoria
         // Resultados nuevos: el filtro anterior ya no aplica.
         _filterTimer.Stop();
         ResultFilter.Text = "";
@@ -1514,7 +1533,6 @@ public partial class QueryTab : UserControl
         }
     }
 
-    /// <summary>Guarda un resultado como .csv (comas) o .txt (tabuladores), con encabezados.</summary>
     /// <summary>Guarda las filas visibles de la cuadrícula (con su filtro y orden) en el formato elegido.</summary>
     private async Task ExportAsync(ResultSet result, DataGrid grid)
     {
@@ -1555,6 +1573,7 @@ public partial class QueryTab : UserControl
         }
         catch (Exception ex)
         {
+            try { File.Delete(path); } catch { }   // un archivo a medias parecería un resultado completo
             owner.IsEnabled = true;
             Errors.Show(owner, "No se pudo guardar el archivo", ex);
         }
@@ -1585,6 +1604,83 @@ public class SpanishSearchLocalization : ICSharpCode.AvalonEdit.Search.Localizat
     public override string NoMatchesFoundText => "No se encontraron coincidencias";
 }
 
+/// <summary>
+/// Comentarios de MySQL que empiezan por '#': desde ahí hasta el final de la línea, con el color de los comentarios.
+/// No cuenta un '#' dentro de una cadena o de un nombre entre comillas.
+/// </summary>
+public class HashCommentColorizer : ICSharpCode.AvalonEdit.Rendering.DocumentColorizingTransformer
+{
+    protected override void ColorizeLine(ICSharpCode.AvalonEdit.Document.DocumentLine line)
+    {
+        string text = CurrentContext.Document.GetText(line);
+        char quote = '\0';
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (quote != '\0')
+            {
+                if (c == '\\' && quote != '`') i++;
+                else if (c == quote) quote = '\0';
+                continue;
+            }
+            if (c is '\'' or '"' or '`') quote = c;
+            // Tras "--" el resto ya es comentario para el resaltado base.
+            else if (c == '-' && i + 1 < text.Length && text[i + 1] == '-') return;
+            else if (c == '#')
+            {
+                var brush = HighlightingManager.Instance.GetDefinition("TSQL")?.GetNamedColor("Comment")?.Foreground?.GetBrush(null) ?? Brushes.Green;
+                ChangeLinePart(line.Offset + i, line.EndOffset, element => element.TextRunProperties.SetForegroundBrush(brush));
+                return;
+            }
+        }
+    }
+}
+
+/// <summary>Lectura de archivos de texto con la codificación que traigan.</summary>
+public static class TextFiles
+{
+    /// <summary>
+    /// Lee el archivo como UTF-8 (con o sin BOM) o UTF-16; si no es UTF-8 válido, como Windows-1252, que es como
+    /// guardan los .sql muchas herramientas antiguas. Devuelve la codificación para poder guardarlo igual.
+    /// </summary>
+    public static string Read(string path, out Encoding encoding)
+    {
+        byte[] bytes = File.ReadAllBytes(path);
+        if (bytes.Length >= 2 && (bytes[0] == 0xFF && bytes[1] == 0xFE || bytes[0] == 0xFE && bytes[1] == 0xFF))
+        {
+            encoding = bytes[0] == 0xFF ? Encoding.Unicode : Encoding.BigEndianUnicode;
+            return encoding.GetString(bytes, 2, bytes.Length - 2);
+        }
+        bool bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+        try
+        {
+            encoding = new UTF8Encoding(bom);
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
+        }
+        catch (DecoderFallbackException)
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            encoding = Encoding.GetEncoding(1252);
+            return encoding.GetString(bytes);
+        }
+    }
+
+    /// <summary>¿Se puede guardar ese texto en esa codificación sin perder caracteres?</summary>
+    public static bool CanEncode(string text, Encoding encoding)
+    {
+        if (encoding is UTF8Encoding or UnicodeEncoding) return true;
+        try
+        {
+            Encoding.GetEncoding(encoding.CodePage, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback).GetBytes(text);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+    }
+}
+
 /// <summary>Pinta en rojo las líneas de error de la vista de texto.</summary>
 public class ErrorLineColorizer : ICSharpCode.AvalonEdit.Rendering.DocumentColorizingTransformer
 {
@@ -1607,7 +1703,9 @@ public static class CellText
     public static string Format(object? value) => value switch
     {
         null => "NULL",
-        DateTime d => d.ToString(d.Millisecond == 0 ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture),
+        // Con la precisión que tenga el valor: sin fracción, milisegundos, o hasta 7 decimales (datetime2, microsegundos).
+        DateTime d => d.ToString(d.Ticks % TimeSpan.TicksPerSecond == 0 ? "yyyy-MM-dd HH:mm:ss"
+            : d.Ticks % TimeSpan.TicksPerMillisecond == 0 ? "yyyy-MM-dd HH:mm:ss.fff" : "yyyy-MM-dd HH:mm:ss.FFFFFFF", CultureInfo.InvariantCulture),
         byte[] bytes => "0x" + Convert.ToHexString(bytes, 0, Math.Min(bytes.Length, 64)) + (bytes.Length > 64 ? "..." : ""),
         IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString() ?? "",

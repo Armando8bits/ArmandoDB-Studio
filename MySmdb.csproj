@@ -12,6 +12,9 @@
     Compilar y ejecutar en un solo paso:
         dotnet run -c Release
 
+    Ejecutar las pruebas automáticas (no hace falta cerrar la aplicación):
+        dotnet test tests\MySmdb.Tests
+
     Generar el instalador (Setup.exe con .NET incluido, para equipos sin .NET; requiere Inno Setup 6):
         .\installer\build-installer.ps1
     El resultado queda en installer\Output. La versión sale de <Version> más abajo.
@@ -26,6 +29,8 @@
     <RootNamespace>MySmdb</RootNamespace>
     <AssemblyName>ArmandoDBStudio</AssemblyName>
     <Version>1.0.0</Version>
+    <!-- Las pruebas son otro proyecto (tests\MySmdb.Tests): sus archivos no se compilan con la aplicación. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**</DefaultItemExcludes>
     <Product>ArmandoDB Studio</Product>
     <AssemblyTitle>ArmandoDB Studio</AssemblyTitle>
     <Company>ArmandoDB Studio</Company>

@@ -40,6 +40,12 @@ public static class ResultExporter
         }
     }
 
+    /// <summary>
+    /// Texto de un valor para un archivo. Como en pantalla, salvo los binarios: en la cuadrícula se abrevian,
+    /// pero en un archivo van completos.
+    /// </summary>
+    private static string Text(object value) => value is byte[] bytes ? "0x" + Convert.ToHexString(bytes) : CellText.Format(value);
+
     // ---------- CSV / TXT ----------
 
     private static void WriteDelimited(string path, string[] columns, IReadOnlyList<object?[]> rows, bool csv, Action<int> step)
@@ -50,10 +56,10 @@ public static class ResultExporter
             if (csv)
             {
                 if (value == null) return "";
-                string text = CellText.Format(value);
+                string text = Text(value);
                 return text.IndexOfAny(new[] { ',', '"', '\r', '\n' }) >= 0 ? "\"" + text.Replace("\"", "\"\"") + "\"" : text;
             }
-            return CellText.Format(value).Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
+            return value == null ? "NULL" : Text(value).Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
         }
 
         // Con BOM, para que Excel reconozca los acentos.
@@ -146,7 +152,8 @@ public static class ResultExporter
                     xml.WriteAttributeString("t", "b");
                     xml.WriteElementString("v", b ? "1" : "0");
                     break;
-                case DateTime d:
+                // Excel no sabe mostrar fechas anteriores a 1900: esas van como texto.
+                case DateTime d when d.Year >= 1900:
                     xml.WriteAttributeString("s", "2");
                     xml.WriteElementString("v", d.ToOADate().ToString("R", CultureInfo.InvariantCulture));
                     break;
@@ -162,7 +169,7 @@ public static class ResultExporter
                     break;
                 default:
                     if (header) xml.WriteAttributeString("s", "1");
-                    InlineString(value as string ?? CellText.Format(value));
+                    InlineString(value as string ?? Text(value));
                     break;
             }
             xml.WriteEndElement();
@@ -207,11 +214,31 @@ public static class ResultExporter
         return letters;
     }
 
-    /// <summary>XML no admite caracteres de control (salvo tabulador y saltos de línea).</summary>
-    private static string CleanForXml(string text) =>
-        text.Any(ch => ch < 0x20 && ch != '\t' && ch != '\n' && ch != '\r')
-            ? new string(text.Where(ch => ch >= 0x20 || ch == '\t' || ch == '\n' || ch == '\r').ToArray())
-            : text;
+    /// <summary>
+    /// XML no admite caracteres de control (salvo tabulador y saltos de línea), ni U+FFFE/U+FFFF, ni mitades
+    /// sueltas de un par suplente; con uno solo, el archivo entero no se podría escribir.
+    /// </summary>
+    private static string CleanForXml(string text)
+    {
+        bool Valid(int i)
+        {
+            char ch = text[i];
+            if (ch < 0x20) return ch is '\t' or '\n' or '\r';
+            if (ch is '￾' or '￿') return false;
+            if (char.IsHighSurrogate(ch)) return i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]);
+            if (char.IsLowSurrogate(ch)) return i > 0 && char.IsHighSurrogate(text[i - 1]);
+            return true;
+        }
+
+        int bad = 0;
+        while (bad < text.Length && Valid(bad)) bad++;
+        if (bad == text.Length) return text;
+
+        var clean = new StringBuilder(text, 0, bad, text.Length);
+        for (int i = bad + 1; i < text.Length; i++)
+            if (Valid(i)) clean.Append(text[i]);
+        return clean.ToString();
+    }
 
     // ---------- JSON ----------
 

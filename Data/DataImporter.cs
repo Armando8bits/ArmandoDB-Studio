@@ -33,6 +33,8 @@ public static class DataImporter
         var rows = ParseCsv(text, delimiter[0]);
         // Una última línea en blanco no es una fila.
         while (rows.Count > 0 && rows[^1].All(v => string.IsNullOrEmpty(v as string))) rows.RemoveAt(rows.Count - 1);
+        // Tampoco las líneas en blanco intermedias: se importarían como filas vacías.
+        rows.RemoveAll(r => r.Length == 1 && string.IsNullOrEmpty(r[0] as string));
         string name = delimiter switch { "," => "coma", ";" => "punto y coma", "\t" => "tabulador", "|" => "barra vertical", _ => delimiter };
         return Build(rows, firstRowHeaders, $"separador: {name} · codificación: {encodingName}");
     }

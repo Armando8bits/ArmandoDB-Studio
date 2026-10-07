@@ -310,7 +310,8 @@ public static class Db
         {
             var row = new string?[reader.FieldCount];
             for (int i = 0; i < row.Length; i++)
-                row[i] = reader.IsDBNull(i) ? null : Convert.ToString(reader.GetValue(i));
+                // Sin depender del idioma del equipo: un decimal es siempre "17.5", no "17,5".
+                row[i] = reader.IsDBNull(i) ? null : Convert.ToString(reader.GetValue(i), System.Globalization.CultureInfo.InvariantCulture);
             rows.Add(row);
         }
         return rows;
