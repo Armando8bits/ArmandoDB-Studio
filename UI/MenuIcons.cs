@@ -22,6 +22,7 @@ public static class MenuIcons
         ("Ejecutar", ExplorerIcon.Execute), ("Mostrar el plan", ExplorerIcon.Plan), ("Cancelar", ExplorerIcon.Cancel),
         ("Filtrar", ExplorerIcon.Filter),
         ("Mostrar u ocultar el explorador", ExplorerIcon.Panel),
+        ("Minimizar", ExplorerIcon.PaneMinimize), ("Maximizar", ExplorerIcon.PaneMaximize),
         ("Anclar", ExplorerIcon.Pin), ("Desanclar", ExplorerIcon.Pin),
         ("Pestaña siguiente", ExplorerIcon.Next), ("Pestaña anterior", ExplorerIcon.Previous),
         ("Dividir: izquierda", ExplorerIcon.SplitSide), ("Dividir: arriba", ExplorerIcon.SplitStack),

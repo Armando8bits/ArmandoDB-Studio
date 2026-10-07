@@ -101,6 +101,11 @@ public partial class QueryTab : UserControl
         CurrentDatabase = database;
         _defaultTitle = defaultTitle;
 
+        UpdateResultsPaneButtons();
+        // Al pasar a otra pestaña del panel (a mano o porque llegó un resultado), un panel minimizado se despliega.
+        // La comprobación descarta los cambios de selección de las cuadrículas de dentro, que también llegan aquí.
+        ResultTabs.SelectionChanged += (_, e) => { if (ReferenceEquals(e.OriginalSource, ResultTabs)) RevealResults(); };
+
         Editor.Options.ConvertTabsToSpaces = true;
         Messages.TextArea.TextView.LineTransformers.Add(new ErrorLineColorizer());
         PlanView.TextArea.TextView.LineTransformers.Add(new ErrorLineColorizer());
@@ -460,6 +465,79 @@ public partial class QueryTab : UserControl
 
     private const int GridTab = 0, MessagesTab = 1, PlanTab = 2;
 
+    // ---------- Panel de resultados: normal, minimizado o maximizado ----------
+
+    public enum ResultsPaneState { Normal, Minimized, Maximized }
+
+    private GridLength _editorHeight = new(1, GridUnitType.Star), _resultsHeight = new(1, GridUnitType.Star);
+
+    public ResultsPaneState ResultsPane { get; private set; }
+
+    /// <summary>
+    /// Minimizado: del panel solo queda su fila de pestañas y el editor ocupa el resto (para ver una consulta larga).
+    /// Maximizado: el panel ocupa todo y el editor se oculta (para recorrer datos, mensajes o el plan).
+    /// Al volver a Normal se recupera el reparto que había.
+    /// </summary>
+    public void SetResultsPane(ResultsPaneState state)
+    {
+        if (state == ResultsPane) return;
+        // El reparto elegido con el separador solo existe en Normal: se guarda al salir de ahí.
+        if (ResultsPane == ResultsPaneState.Normal)
+            (_editorHeight, _resultsHeight) = (EditorRow.Height, ResultsRow.Height);
+        ResultsPane = state;
+
+        bool normal = state == ResultsPaneState.Normal;
+        Editor.Visibility = state == ResultsPaneState.Maximized ? Visibility.Collapsed : Visibility.Visible;
+        ResultsSplitter.Visibility = normal ? Visibility.Visible : Visibility.Collapsed;
+        EditorRow.MinHeight = state == ResultsPaneState.Maximized ? 0 : 60;
+        ResultsRow.MinHeight = normal ? 60 : 0;
+        switch (state)
+        {
+            case ResultsPaneState.Minimized:
+                // Alto de la fila de pestañas: el contenido queda fuera de la vista.
+                double strip = ResultTabs.Items.OfType<TabItem>().Select(t => t.ActualHeight).DefaultIfEmpty(0).Max();
+                EditorRow.Height = new GridLength(1, GridUnitType.Star);
+                ResultsRow.Height = new GridLength(strip > 0 ? strip + 1 : 33);
+                break;
+            case ResultsPaneState.Maximized:
+                EditorRow.Height = new GridLength(0);
+                ResultsRow.Height = new GridLength(1, GridUnitType.Star);
+                break;
+            default:
+                (EditorRow.Height, ResultsRow.Height) = (_editorHeight, _resultsHeight);
+                break;
+        }
+        UpdateResultsPaneButtons();
+        if (state != ResultsPaneState.Maximized) FocusEditor();
+    }
+
+    /// <summary>Minimiza el panel; si ya lo estaba, lo devuelve a su tamaño.</summary>
+    public void ToggleMinimizeResults() =>
+        SetResultsPane(ResultsPane == ResultsPaneState.Minimized ? ResultsPaneState.Normal : ResultsPaneState.Minimized);
+
+    /// <summary>Maximiza el panel; si ya lo estaba, lo devuelve a su tamaño.</summary>
+    public void ToggleMaximizeResults() =>
+        SetResultsPane(ResultsPane == ResultsPaneState.Maximized ? ResultsPaneState.Normal : ResultsPaneState.Maximized);
+
+    private void MinimizeResults_Click(object sender, RoutedEventArgs e) => ToggleMinimizeResults();
+    private void MaximizeResults_Click(object sender, RoutedEventArgs e) => ToggleMaximizeResults();
+
+    /// <summary>Cada botón muestra lo que hará: minimizar/maximizar, o restaurar si ese es el estado actual.</summary>
+    private void UpdateResultsPaneButtons()
+    {
+        bool minimized = ResultsPane == ResultsPaneState.Minimized, maximized = ResultsPane == ResultsPaneState.Maximized;
+        MinimizeResultsButton.Content = ExplorerIcons.Create(minimized ? ExplorerIcon.PaneRestore : ExplorerIcon.PaneMinimize);
+        MinimizeResultsButton.ToolTip = minimized ? "Restaurar el panel de resultados (Ctrl+R)" : "Minimizar el panel de resultados: deja todo el espacio a la consulta (Ctrl+R)";
+        MaximizeResultsButton.Content = ExplorerIcons.Create(maximized ? ExplorerIcon.PaneRestore : ExplorerIcon.PaneMaximize);
+        MaximizeResultsButton.ToolTip = maximized ? "Restaurar el panel de resultados (Ctrl+Mayús+R)" : "Maximizar el panel de resultados: oculta la consulta (Ctrl+Mayús+R)";
+    }
+
+    /// <summary>Hay algo nuevo que ver (resultados, mensajes, plan): un panel minimizado vuelve a su tamaño.</summary>
+    private void RevealResults()
+    {
+        if (ResultsPane == ResultsPaneState.Minimized) SetResultsPane(ResultsPaneState.Normal);
+    }
+
     /// <summary>Pregunta antes de ejecutar sentencias peligrosas. "No" es la opción por defecto.</summary>
     private bool ConfirmDangerous(List<string> warnings)
     {
@@ -588,6 +666,7 @@ public partial class QueryTab : UserControl
             ShowResults(results);
             Messages.Text = log.ToString();
             ResultTabs.SelectedIndex = results.Count > 0 && !failed ? GridTab : MessagesTab;
+            RevealResults();
         }
         catch (Exception ex)
         {
@@ -630,6 +709,7 @@ public partial class QueryTab : UserControl
         // Se pasa ya a la pestaña del plan, con el aviso de carga encima del plan anterior.
         PlanLoading.Visibility = Visibility.Visible;
         ResultTabs.SelectedIndex = PlanTab;
+        RevealResults();
         StateChanged?.Invoke(this);
 
         var output = new StringBuilder();

@@ -46,17 +46,25 @@
         </ControlTemplate>
     </UserControl.Resources>
     <Grid>
+        <!-- Editor arriba y resultados abajo. El panel de resultados se puede minimizar (queda solo su fila de
+             pestañas) o maximizar (ocupa todo y oculta el editor); ver SetResultsPane. -->
         <Grid.RowDefinitions>
-            <RowDefinition Height="*" MinHeight="60"/>
+            <RowDefinition x:Name="EditorRow" Height="*" MinHeight="60"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="60"/>
+            <RowDefinition x:Name="ResultsRow" Height="*" MinHeight="60"/>
         </Grid.RowDefinitions>
 
         <avalon:TextEditor x:Name="Editor" FontFamily="Consolas" FontSize="13"
                            ShowLineNumbers="True" SyntaxHighlighting="TSQL"
                            HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"/>
 
-        <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="{DynamicResource Brush.Splitter}"/>
+        <GridSplitter Grid.Row="1" x:Name="ResultsSplitter" Height="5" HorizontalAlignment="Stretch" Background="{DynamicResource Brush.Splitter}"/>
+
+        <!-- Minimizar / maximizar el panel de resultados, sobre el extremo derecho de su fila de pestañas. -->
+        <StackPanel Grid.Row="2" Panel.ZIndex="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,4,0">
+            <Button x:Name="MinimizeResultsButton" Click="MinimizeResults_Click" Padding="5,3" Margin="0,0,2,0" Focusable="False"/>
+            <Button x:Name="MaximizeResultsButton" Click="MaximizeResults_Click" Padding="5,3" Focusable="False"/>
+        </StackPanel>
 
         <TabControl Grid.Row="2" x:Name="ResultTabs">
             <TabItem Header="Cuadrícula">

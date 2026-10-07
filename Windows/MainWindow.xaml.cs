@@ -283,6 +283,17 @@ public partial class MainWindow : Window
             e.Handled = true;
             if (Current != null) Save(Current, saveAs: false);
         }
+        else if (e.Key == Key.R && modifiers == ModifierKeys.Control)
+        {
+            // Como en SSMS: Ctrl+R oculta o muestra el panel de resultados.
+            e.Handled = true;
+            Current?.ToggleMinimizeResults();
+        }
+        else if (e.Key == Key.R && modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            e.Handled = true;
+            Current?.ToggleMaximizeResults();
+        }
         else if (modifiers == ModifierKeys.Control && e.Key == Key.W)
         {
             e.Handled = true;
@@ -313,6 +324,8 @@ public partial class MainWindow : Window
     private void Save_Click(object sender, RoutedEventArgs e) { if (Current != null) Save(Current, saveAs: false); }
     private void SaveAs_Click(object sender, RoutedEventArgs e) { if (Current != null) Save(Current, saveAs: true); }
     private void CloseTab_Click(object sender, RoutedEventArgs e) { if (ActiveEntry != null) CloseTab(ActiveEntry); }
+    private void MinimizeResults_Click(object sender, RoutedEventArgs e) => Current?.ToggleMinimizeResults();
+    private void MaximizeResults_Click(object sender, RoutedEventArgs e) => Current?.ToggleMaximizeResults();
     private void Exit_Click(object sender, RoutedEventArgs e) => Close();
     private async void Execute_Click(object sender, RoutedEventArgs e) => await ExecuteCurrentAsync();
     private void Cancel_Click(object sender, RoutedEventArgs e) => Current?.Cancel();
@@ -428,7 +441,9 @@ public partial class MainWindow : Window
             "Ctrl+Espacio\t\tAutocompletar\n" +
             "Tab\t\t\tExpandir un fragmento (sel, upd, ij...)\n\n" +
             "Ctrl+Mayús+L\t\tFiltrar los resultados\n" +
-            "Ctrl+B\t\t\tMostrar u ocultar el explorador",
+            "Ctrl+B\t\t\tMostrar u ocultar el explorador\n" +
+            "Ctrl+R\t\t\tMinimizar o restaurar el panel de resultados\n" +
+            "Ctrl+Mayús+R\t\tMaximizar o restaurar el panel de resultados",
             "Atajos de teclado", MessageBoxButton.OK, MessageBoxImage.Information);
 
     // ---------- Conexión ----------

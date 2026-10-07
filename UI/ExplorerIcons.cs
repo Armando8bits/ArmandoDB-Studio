@@ -14,6 +14,8 @@ public enum ExplorerIcon
     NewQuery, Open, Save, SaveAs, Close, Exit, Undo, Redo, Find, Replace, Format, Complete, Snippets, Filter, Panel, Pin,
     Next, Previous, MoveGroup, Monitor, Font, Confirm, Theme, Keyboard, Log, About, Refresh, Backup, Restore, Import,
     Copy, CopyHeaders, SelectAll, SortAscending, SortDescending, ClearSort,
+    // Panel de resultados: minimizado, maximizado y repartido con el editor.
+    PaneMinimize, PaneMaximize, PaneRestore,
 }
 
 /// <summary>Iconos vectoriales (16x16) del explorador de objetos y de las acciones, dibujados en código.</summary>
@@ -401,6 +403,23 @@ public static class ExplorerIcons
             case ExplorerIcon.ClearSort:
                 Add("M2,4 H9 M2,8 H9 M2,12 H9", null, SteelDark, 1.7);
                 Add("M11,6 L15,10 M15,6 L11,10", null, Red, 1.7);
+                break;
+
+            case ExplorerIcon.PaneMinimize:
+                // El panel reducido a una franja abajo.
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z", Brushes.White, Steel);
+                Add("M1.5,11 H14.5 V13.5 H1.5 Z", Accent, Steel);
+                break;
+
+            case ExplorerIcon.PaneMaximize:
+                // El panel ocupando todo.
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z", Accent, Steel);
+                break;
+
+            case ExplorerIcon.PaneRestore:
+                // Editor arriba y panel abajo, a medias.
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z", Brushes.White, Steel);
+                Add("M1.5,8 H14.5 V13.5 H1.5 Z", Accent, Steel);
                 break;
 
             case ExplorerIcon.KeyColumn:

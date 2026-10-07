@@ -42,6 +42,8 @@
             </MenuItem>
             <MenuItem Header="_Ventana" SubmenuOpened="WindowMenu_SubmenuOpened">
                 <MenuItem Header="Mostrar u ocultar el _explorador de objetos" InputGestureText="Ctrl+B" Click="ToggleExplorer_Click"/>
+                <MenuItem Header="Minimi_zar o restaurar el panel de resultados" InputGestureText="Ctrl+R" Click="MinimizeResults_Click"/>
+                <MenuItem Header="Ma_ximizar o restaurar el panel de resultados" InputGestureText="Ctrl+Mayús+R" Click="MaximizeResults_Click"/>
                 <Separator/>
                 <MenuItem Header="_Anclar o desanclar pestaña" Click="TogglePin_Click"/>
                 <MenuItem Header="Pestaña _siguiente" InputGestureText="Ctrl+Tab" Click="NextTab_Click"/>
