@@ -74,6 +74,8 @@
             </MenuItem>
             <MenuItem Header="A_yuda">
                 <MenuItem Header="_Atajos de teclado..." Click="Shortcuts_Click"/>
+                <MenuItem Header="_Registro de errores y consultas recuperadas..." Click="OpenDataFolder_Click"
+                          ToolTip="Abre la carpeta con errors.log (para informar de un fallo) y las copias de recuperación"/>
                 <MenuItem Header="_Acerca de ArmandoDB Studio..." Click="About_Click"/>
             </MenuItem>
         </Menu>

@@ -298,28 +298,44 @@ public partial class ConnectionDialog : Window
         return profile;
     }
 
+    /// <summary>Versión del servidor de la última conexión abierta con éxito (primera línea), o null si no se pudo leer.</summary>
+    private static string? _serverVersion;
+
     /// <summary>Abre y cierra una conexión. Devuelve el mensaje de error, o null si funcionó.</summary>
-    private static async Task<string?> TryOpenAsync(ConnectionProfile profile)
-    {
-        try
+    private static Task<string?> TryOpenAsync(ConnectionProfile profile) =>
+        // En otro hilo: abrir el túnel SSH puede tardar unos segundos, y algún controlador (Sybase) conecta de forma síncrona.
+        Task.Run(async () =>
         {
-            // Fuera del hilo de la interfaz: abrir el túnel SSH puede tardar unos segundos.
-            await using var conn = await Task.Run(() => profile.CreateConnection(profile.Database));
-            await conn.OpenAsync();
-            if (profile.Kind == DbKind.Sqlite)
+            _serverVersion = null;
+            try
             {
-                // Abrir no valida el archivo; esta consulta falla si no es una base SQLite.
+                await using var conn = profile.CreateConnection(profile.Database);
+                await Db.OpenAsync(conn);
                 await using var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master";
-                await cmd.ExecuteScalarAsync();
+                if (profile.Kind == DbKind.Sqlite)
+                {
+                    // Abrir no valida el archivo; esta consulta falla si no es una base SQLite.
+                    cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master";
+                    await cmd.ExecuteScalarAsync();
+                    return null;
+                }
+                try
+                {
+                    // Solo informativo: confirma con qué servidor se habló. Si falla, la conexión sigue siendo válida.
+                    cmd.CommandText = Db.IsTSql(profile.Kind) ? "select @@version" : "SELECT VERSION()";
+                    string version = (Convert.ToString(await cmd.ExecuteScalarAsync()) ?? "").Split('\n')[0].Trim();
+                    _serverVersion = version.Length > 110 ? version[..110] + "…" : version;
+                }
+                catch
+                {
+                }
+                return (string?)null;
             }
-            return null;
-        }
-        catch (Exception ex)
-        {
-            return ex.Message;
-        }
-    }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        });
 
     private void Store(ConnectionProfile profile)
     {
@@ -350,7 +366,7 @@ public partial class ConnectionDialog : Window
         SetBusy(false);
 
         if (error == null)
-            SetStatus($"✔ Conexión correcta ({watch.ElapsedMilliseconds} ms).", true);
+            SetStatus($"✔ Conexión correcta ({watch.ElapsedMilliseconds} ms)." + (string.IsNullOrEmpty(_serverVersion) ? "" : "\n" + _serverVersion), true);
         else
             SetStatus("✖ No se pudo conectar: " + error, false);
     }

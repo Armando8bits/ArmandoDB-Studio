@@ -117,6 +117,10 @@ public class ConnectionProfile
 
         if (Kind == DbKind.Sybase)
         {
+            // El controlador adopta el juego de caracteres del servidor, que en instalaciones antiguas suele ser
+            // una página de códigos (cp850, cp1252...) que .NET solo conoce si se registra este proveedor.
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
             // El controlador no trae un generador de cadenas propio; el genérico se encarga de escapar los valores.
             var sybase = new DbConnectionStringBuilder
             {
@@ -128,6 +132,8 @@ public class ConnectionProfile
                 ["Pooling"] = false,
                 ["ApplicationName"] = App.Name,
                 ["LoginTimeOut"] = 15,
+                // Por defecto el servidor corta las columnas text/image a 32 KB.
+                ["TextSize"] = int.MaxValue,
                 // El controlador exige una base. Sin ninguna elegida, master: cualquier usuario puede entrar en ella.
                 ["Database"] = string.IsNullOrEmpty(database) ? "master" : database,
             };
@@ -250,11 +256,44 @@ public record IndexInfo(string Name, bool Unique, bool Primary, string Columns)
 public static class Db
 {
     /// <summary>Consulta auxiliar en una conexión de corta duración.</summary>
-    public static async Task<List<string?[]>> QueryAsync(ConnectionProfile profile, string? database, string sql, params string[] args)
+    public static Task<List<string?[]>> QueryAsync(ConnectionProfile profile, string? database, string sql, params string[] args) =>
+        // El controlador de Sybase abre la conexión y lee las filas de forma síncrona: todo va a otro hilo
+        // para que la ventana no se quede congelada mientras tanto.
+        profile.Kind == DbKind.Sybase
+            ? Task.Run(() => QueryCoreAsync(profile, database, sql, args))
+            : QueryCoreAsync(profile, database, sql, args);
+
+    private const int SybaseOpenTimeoutSeconds = 25;
+
+    /// <summary>
+    /// Abre la conexión. El controlador de Sybase conecta de forma síncrona y, si el servidor acepta la conexión
+    /// pero no contesta (un puerto que no es el de la base, por ejemplo), espera para siempre: se le pone un límite.
+    /// </summary>
+    public static async Task OpenAsync(DbConnection connection, CancellationToken token = default)
+    {
+        if (connection is not AseConnection)
+        {
+            await connection.OpenAsync(token);
+            return;
+        }
+
+        var open = Task.Run(connection.Open, token);
+        if (await Task.WhenAny(open, Task.Delay(TimeSpan.FromSeconds(SybaseOpenTimeoutSeconds), token)) != open)
+        {
+            // El intento sigue vivo en su hilo; al terminar (o fallar) se libera solo.
+            _ = open.ContinueWith(t => { _ = t.Exception; try { connection.Dispose(); } catch { } }, TaskScheduler.Default);
+            token.ThrowIfCancellationRequested();
+            throw new TimeoutException(
+                $"El servidor no respondió al inicio de sesión en {SybaseOpenTimeoutSeconds} segundos. Comprueba el servidor y el puerto: algo acepta la conexión, pero no contesta como Sybase ASE.");
+        }
+        await open;
+    }
+
+    private static async Task<List<string?[]>> QueryCoreAsync(ConnectionProfile profile, string? database, string sql, string[] args)
     {
         // Fuera del hilo de la interfaz: abrir un túnel SSH puede tardar unos segundos.
         await using var conn = await Task.Run(() => profile.CreateConnection(database));
-        await conn.OpenAsync();
+        await OpenAsync(conn);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         for (int i = 0; i < args.Length; i++)

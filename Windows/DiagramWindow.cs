@@ -612,7 +612,7 @@ public class DiagramWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo guardar la imagen", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo guardar la imagen", ex);
         }
     }
 

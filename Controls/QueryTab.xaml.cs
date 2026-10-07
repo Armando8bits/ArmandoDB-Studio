@@ -504,8 +504,7 @@ public partial class QueryTab : UserControl
         var settings = AppSettings.Current;
         // En SQL Server y Sybase lo que se ejecuta son lotes; para revisarlos se miran sus sentencias una a una.
         var toReview = !Db.IsTSql(Profile.Kind) ? statements
-            : statements.SelectMany(batch => SqlSplitter.Split(batch.Text, mysql: false)
-                .Select(s => new SqlStatement(s.Text, batch.Line + s.Line - 1))).ToList();
+            : statements.SelectMany(SqlSplitter.SplitTSqlForReview).ToList();
         var warnings = SqlSafety.Review(toReview, lineOffset, Profile.IsProduction,
             settings.ConfirmDangerous, settings.ConfirmProductionWrites);
         if (warnings.Count > 0 && !ConfirmDangerous(warnings))
@@ -584,9 +583,19 @@ public partial class QueryTab : UserControl
         log.AppendLine();
         log.AppendLine($"Hora de finalización: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 
-        ShowResults(results);
-        Messages.Text = log.ToString();
-        ResultTabs.SelectedIndex = results.Count > 0 && !failed ? GridTab : MessagesTab;
+        try
+        {
+            ShowResults(results);
+            Messages.Text = log.ToString();
+            ResultTabs.SelectedIndex = results.Count > 0 && !failed ? GridTab : MessagesTab;
+        }
+        catch (Exception ex)
+        {
+            // La consulta ya se ejecutó; lo que falló es pintar su resultado. La pestaña debe quedar utilizable.
+            failed = true;
+            try { Messages.Text = log + Environment.NewLine + "Error: no se pudo mostrar el resultado: " + ex.Message.ReplaceLineEndings(" "); } catch { }
+            Errors.Show(Window.GetWindow(this), "No se pudo mostrar el resultado de la consulta", ex);
+        }
 
         CurrentDatabase = database;
         // Si cambió la estructura, el autocompletado vuelve a leer tablas y columnas.
@@ -677,11 +686,20 @@ public partial class QueryTab : UserControl
         _cts = null;
         if (cancelled) output.AppendLine("Cancelado por el usuario.");
 
-        PlanView.Text = output.ToString();
-        PlanView.ScrollToHome();
-        ResultTabs.SelectedIndex = PlanTab;
         PlanLoading.Visibility = Visibility.Collapsed;
-        ShowPlanDiagram(sections);
+        try
+        {
+            PlanView.Text = output.ToString();
+            PlanView.ScrollToHome();
+            ResultTabs.SelectedIndex = PlanTab;
+            ShowPlanDiagram(sections);
+        }
+        catch (Exception ex)
+        {
+            // El plan ya se obtuvo; lo que falló es dibujarlo. Queda el texto y la pestaña sigue utilizable.
+            failed = true;
+            Errors.Show(Window.GetWindow(this), "No se pudo dibujar el plan de ejecución", ex);
+        }
 
         CurrentDatabase = database;
         IsRunning = false;
@@ -973,7 +991,7 @@ public partial class QueryTab : UserControl
             sqlServer.InfoMessage += (_, e) => _serverMessages?.AppendLine(e.Message);
         if (_conn is AdoNetCore.AseClient.AseConnection sybase)
             sybase.InfoMessage += (_, e) => _serverMessages?.AppendLine((e.Message ?? "").TrimEnd('\r', '\n'));
-        await _conn.OpenAsync(token);
+        await Db.OpenAsync(_conn, token);
     }
 
     /// <summary>Registro de la ejecución en curso, donde se anotan los mensajes del servidor (PRINT de SQL Server).</summary>
@@ -1245,7 +1263,7 @@ public partial class QueryTab : UserControl
         menu.Items.Add(MenuItem("Seleccionar todo", grid.SelectAllCells));
         menu.Items.Add(new Separator());
         menu.Items.Add(MenuItem("Filtrar resultados (Ctrl+Mayús+L)", ToggleResultFilter));
-        menu.Items.Add(MenuItem("Guardar resultados como...", () => _ = ExportAsync(result, grid)));
+        menu.Items.Add(MenuItem("Guardar resultados como...", () => ExportAsync(result, grid).Watch("Exportar resultados")));
         grid.ContextMenu = menu;
 
         grid.ItemsSource = result.Rows;
@@ -1442,7 +1460,7 @@ public partial class QueryTab : UserControl
         catch (Exception ex)
         {
             owner.IsEnabled = true;
-            MessageBox.Show(owner, ex.Message, "No se pudo guardar el archivo", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(owner, "No se pudo guardar el archivo", ex);
         }
         finally
         {

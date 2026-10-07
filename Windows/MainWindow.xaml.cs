@@ -156,7 +156,49 @@ public partial class MainWindow : Window
     private List<TabEntry> VisualOrder(TabGroup group) =>
         _tabs.Where(t => t.Group == group && t.Pinned).Concat(_tabs.Where(t => t.Group == group && !t.Pinned)).ToList();
 
-    private async void Window_Loaded(object sender, RoutedEventArgs e) => await ConnectAsync();
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        StartRecovery();
+        await ConnectAsync();
+    }
+
+    private void OpenDataFolder_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(App.DataFolder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(App.DataFolder) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Errors.Show(this, "No se pudo abrir la carpeta de datos", ex);
+        }
+    }
+
+    private readonly DispatcherTimer _recoveryTimer = new() { Interval = TimeSpan.FromSeconds(20) };
+
+    /// <summary>
+    /// Copia de recuperación de las consultas sin guardar (ver RecoveryStore): avisa si la ejecución anterior
+    /// dejó alguna y empieza a guardar las de esta cada pocos segundos.
+    /// </summary>
+    private void StartRecovery()
+    {
+        var recovered = RecoveryStore.CollectFromCrashes();
+        RecoveryStore.Start(() => _tabs
+            .Where(t => t.Tab.IsDirty && t.Tab.SqlEditor.Text.Trim().Length > 0)
+            .Select(t => new UnsavedQuery(t.Tab.Title, t.Tab.Profile.Name, t.Tab.FilePath, t.Tab.SqlEditor.Text)).ToList());
+        _recoveryTimer.Tick += (_, _) => RecoveryStore.SaveIfChanged();
+        _recoveryTimer.Start();
+
+        if (recovered is not { } found) return;
+        var answer = MessageBox.Show(this,
+            $"La última vez {App.Name} no se cerró correctamente.\n\nSe recuperaron {found.Count} consulta(s) con cambios sin guardar en:\n{found.Folder}\n\n" +
+            "Puedes abrirlas con Archivo → Abrir. ¿Abrir ahora esa carpeta?",
+            "Consultas recuperadas", MessageBoxButton.YesNo, MessageBoxImage.Information);
+        if (answer != MessageBoxResult.Yes) return;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(found.Folder) { UseShellExecute = true }); }
+        catch (Exception ex) { Errors.Show(this, "No se pudo abrir la carpeta", ex); }
+    }
 
     // ---------- Atajos de teclado ----------
 
@@ -563,7 +605,7 @@ public partial class MainWindow : Window
         else if (_databases.Count > 0)
             AddTab(_databases.Keys.First(), null);
         else
-            _ = ConnectAsync();
+            ConnectAsync().Watch("Conectar");
     }
 
     private static Button HeaderButton(string content, string toolTip) => new()
@@ -1099,8 +1141,8 @@ public partial class MainWindow : Window
             };
             bar.Children.Add(button);
         }
-        AddButton("▶ Ejecutar", "Ejecutar (Ctrl+E o F5)", () => _ = ExecuteCurrentAsync());
-        AddButton("Plan", "Plan de ejecución (Ctrl+L)", () => _ = Current?.ExplainAsync());
+        AddButton("▶ Ejecutar", "Ejecutar (Ctrl+E o F5)", () => ExecuteCurrentAsync().Watch("Ejecutar la consulta"));
+        AddButton("Plan", "Plan de ejecución (Ctrl+L)", () => Current?.ExplainAsync().Watch("Plan de ejecución"));
         AddButton("■ Cancelar", "Cancelar la ejecución (Alt+Pausa)", () => Current?.Cancel());
         area.CancelButton = (Button)bar.Children[^1];
         area.CancelButton.IsEnabled = false;
@@ -1325,7 +1367,7 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "No se pudo abrir el archivo", MessageBoxButton.OK, MessageBoxImage.Error);
+                Errors.Show(this, "No se pudo abrir el archivo", ex);
             }
         }
         SaveSessions();
@@ -1349,7 +1391,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo guardar el archivo", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo guardar el archivo", ex);
             return false;
         }
     }
@@ -1403,11 +1445,11 @@ public partial class MainWindow : Window
                     // Sybase: todavía no (falta probar la generación del script contra un servidor real).
                     if (node.Profile.Kind != DbKind.Sybase)
                     {
-                        Add("Copia de seguridad (.sql)...", () => _ = BackupAsync(node));
-                        Add("Restaurar desde .sql...", () => _ = RestoreAsync(item, node));
+                        Add("Copia de seguridad (.sql)...", () => BackupAsync(node).Watch("Copia de seguridad"));
+                        Add("Restaurar desde .sql...", () => RestoreAsync(item, node).Watch("Restaurar"));
                     }
                 }
-                Add("Actualizar", () => _ = RefreshAsync(item, node));
+                Add("Actualizar", () => RefreshAsync(item, node).Watch("Actualizar el explorador"));
                 menu.Items.Add(new Separator());
                 Add("Desconectar", () => Disconnect(node.Profile));
                 ((MenuItem)menu.Items[^1]).Icon = ExplorerIcons.Create(ExplorerIcon.Disconnect);
@@ -1424,7 +1466,7 @@ public partial class MainWindow : Window
                 {
                     var tab = AddTab(node.Profile, node.Database);
                     tab.SetText(ScriptTemplates.SelectTop(dialect, fullName));
-                    _ = tab.ExecuteAsync();
+                    tab.ExecuteAsync().Watch("Ejecutar la consulta");
                 });
 
                 // "Generar script como", como en SSMS. Se abre en una pestaña nueva, sin ejecutar.
@@ -1447,12 +1489,12 @@ public partial class MainWindow : Window
                 }
                 menu.Items.Add(scriptAs);
                 if (node.Kind == NodeKind.Table && node.Profile.Kind != DbKind.Sybase)
-                    Add("Importar datos (CSV, Excel)...", () => _ = ImportAsync(node));
-                Add("Actualizar", () => _ = RefreshAsync(item, node));
+                    Add("Importar datos (CSV, Excel)...", () => ImportAsync(node).Watch("Importar datos"));
+                Add("Actualizar", () => RefreshAsync(item, node).Watch("Actualizar el explorador"));
                 break;
 
             case NodeKind.Procedure:
-                Add("Generar script CREATE", () => _ = ScriptCreateAsync(node));
+                Add("Generar script CREATE", () => ScriptCreateAsync(node).Watch("Generar script"));
                 // SQL Server ejecuta los procedimientos con EXEC; MySQL, con CALL.
                 bool exec = Db.IsTSql(node.Profile.Kind);
                 Add(exec ? "Generar llamada (EXEC)" : "Generar llamada (CALL)", () =>
@@ -1462,13 +1504,13 @@ public partial class MainWindow : Window
                 break;
 
             case NodeKind.Function:
-                Add("Generar script CREATE", () => _ = ScriptCreateAsync(node));
+                Add("Generar script CREATE", () => ScriptCreateAsync(node).Watch("Generar script"));
                 Add("Generar llamada (SELECT)", () =>
                     AddTab(node.Profile, node.Database).SetText($"SELECT {Db.FullName(node.Profile, node.Database, node.Name!)}();\n"));
                 break;
 
             default:
-                Add("Generar script CREATE", () => _ = ScriptCreateAsync(node));
+                Add("Generar script CREATE", () => ScriptCreateAsync(node).Watch("Generar script"));
                 break;
         }
         return menu;
@@ -1529,7 +1571,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo crear la copia", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo crear la copia", ex);
         }
     }
 
@@ -1559,9 +1601,8 @@ public partial class MainWindow : Window
             var result = await RunWithProgressAsync("Restaurando",
                 (progress, token) => DatabaseBackup.RestoreAsync(node.Profile, node.Database!, statements, progress, token));
             if (result.Error != null)
-                MessageBox.Show(this,
-                    $"Se detuvo en la sentencia de la línea {result.ErrorLine} (se ejecutaron {result.Executed:N0} de {result.Total:N0}):\n\n{result.Error}",
-                    "Restauración incompleta", MessageBoxButton.OK, MessageBoxImage.Error);
+                Errors.Show(this, "Restauración incompleta",
+                    $"Se detuvo en la sentencia de la línea {result.ErrorLine} (se ejecutaron {result.Executed:N0} de {result.Total:N0}).", result.Error);
             else
                 MessageBox.Show(this, $"Restauración completada: {result.Executed:N0} sentencias ejecutadas.", "Restaurar", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -1571,7 +1612,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo restaurar", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo restaurar", ex);
         }
 
         // La estructura pudo cambiar: se refrescan el árbol y el autocompletado.
@@ -1588,7 +1629,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo preparar la importación", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo preparar la importación", ex);
         }
     }
 
@@ -1611,7 +1652,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo generar el script", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo generar el script", ex);
         }
     }
 
@@ -1768,7 +1809,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo generar el script", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo generar el script", ex);
         }
     }
 }

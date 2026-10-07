@@ -42,20 +42,26 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Lo primero: a partir de aquí ningún error cierra la aplicación sin mostrarse (ver Errors).
+        Errors.Install(this);
         base.OnStartup(e);
-        // Antes de que se cree la ventana principal (StartupUri).
-        Theme.Apply(Theme.Parse(AppSettings.Current.Theme));
+        try
+        {
+            // Antes de que se cree la ventana principal (StartupUri).
+            Theme.Apply(Theme.Parse(AppSettings.Current.Theme));
+        }
+        catch (Exception ex)
+        {
+            // Con el tema por defecto se puede trabajar igual.
+            Errors.Show(null, "No se pudo aplicar el tema", ex);
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
-        SshTunnels.CloseAll();
+        try { SshTunnels.CloseAll(); } catch { }
+        // Salida normal: las consultas ya se guardaron o se descartaron a propósito.
+        RecoveryStore.Clear();
         base.OnExit(e);
-    }
-
-    private void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
-    {
-        MessageBox.Show(e.Exception.Message, $"{Name} - Error inesperado", MessageBoxButton.OK, MessageBoxImage.Error);
-        e.Handled = true;
     }
 }

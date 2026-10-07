@@ -158,7 +158,7 @@ public class ProcessMonitorWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "No se pudo", MessageBoxButton.OK, MessageBoxImage.Error);
+            Errors.Show(this, "No se pudo cancelar el proceso", ex);
         }
         await RefreshAsync();
     }

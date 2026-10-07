@@ -9,12 +9,13 @@ public static class SqlSafety
     private static readonly Regex Where = new(@"\bWHERE\b", RegexOptions.IgnoreCase);
     private static readonly Regex DropOrTruncate = new(@"^\s*(DROP|TRUNCATE)\b", RegexOptions.IgnoreCase);
     private static readonly Regex Write = new(
-        @"^\s*(INSERT|REPLACE|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE|RENAME|GRANT|REVOKE|LOAD|CALL)\b", RegexOptions.IgnoreCase);
+        @"^\s*(INSERT|REPLACE|UPDATE|DELETE|MERGE|ALTER|CREATE|DROP|TRUNCATE|RENAME|GRANT|REVOKE|LOAD|CALL|EXEC|EXECUTE)\b", RegexOptions.IgnoreCase);
 
     /// <summary>
     /// Avisos, uno por sentencia.
     /// <paramref name="dangerous"/>: UPDATE/DELETE sin WHERE, DROP y TRUNCATE, en cualquier conexión.
-    /// <paramref name="productionWrites"/>: en producción, cualquier sentencia que pueda modificar datos o estructura (incluido CALL).
+    /// <paramref name="productionWrites"/>: en producción, cualquier sentencia que pueda modificar datos o estructura
+    /// (incluidos CALL y EXEC: un procedimiento almacenado puede hacer cualquier cosa).
     /// </summary>
     public static List<string> Review(IEnumerable<SqlStatement> statements, int lineOffset, bool production,
         bool dangerous = true, bool productionWrites = true)

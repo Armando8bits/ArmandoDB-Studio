@@ -86,6 +86,43 @@ public static class SqlSplitter
         return result;
     }
 
+    // Palabras con las que empieza una sentencia de Transact-SQL cuando abre una línea.
+    private static readonly Regex TSqlStatementStart = new(
+        @"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|EXEC|EXECUTE|DECLARE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|IF|WHILE|PRINT|RETURN|USE|COMMIT|ROLLBACK|BEGIN\s+TRAN\w*)\b",
+        RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Sentencias de un lote de Transact-SQL, solo para revisarlas antes de ejecutar (el lote se envía entero).
+    /// En T-SQL el ';' es opcional y casi nadie lo pone, así que además se corta en cada línea que empieza por
+    /// una palabra de inicio de sentencia. Es aproximado: ante la duda, corta de más (avisa de más, no de menos).
+    /// </summary>
+    public static List<SqlStatement> SplitTSqlForReview(SqlStatement batch)
+    {
+        var result = new List<SqlStatement>();
+        foreach (var piece in Split(batch.Text, mysql: false))
+        {
+            var current = new StringBuilder();
+            int line = batch.Line + piece.Line - 1, start = line;
+            void Flush()
+            {
+                if (current.ToString().Trim().Length > 0) result.Add(new SqlStatement(current.ToString().Trim(), start));
+                current.Clear();
+            }
+            foreach (string text in piece.Text.Split('\n'))
+            {
+                if (TSqlStatementStart.IsMatch(text))
+                {
+                    Flush();
+                    start = line;
+                }
+                current.Append(text).Append('\n');
+                line++;
+            }
+            Flush();
+        }
+        return result;
+    }
+
     /// <param name="mysql">
     /// true: reglas de MySQL (comentarios con '#', DELIMITER, escapes con '\').
     /// false: reglas de SQLite, donde un CREATE TRIGGER lleva ';' dentro y termina en "; END".

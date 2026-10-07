@@ -36,6 +36,9 @@ coverage*.xml
 *.sqlite3
 *.db3
 
+# Archivos comprimidos sueltos (material de referencia ajeno al proyecto)
+*.zip
+
 # Sistema operativo
 Thumbs.db
 Desktop.ini
