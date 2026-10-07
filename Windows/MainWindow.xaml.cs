@@ -59,6 +59,11 @@ public partial class MainWindow : Window
         /// <summary>Ejecutar y Plan de la ventana flotante: se desactivan mientras su pestaña ejecuta algo.</summary>
         public Button? ExecuteButton { get; set; }
         public Button? PlanButton { get; set; }
+        /// <summary>"Quitar división" de la ventana flotante: solo activo con la vista dividida.</summary>
+        public Button? UnsplitButton { get; set; }
+        /// <summary>Botones de dividir de la ventana flotante: se desactiva el de la orientación ya aplicada.</summary>
+        public Button? SplitSideButton { get; set; }
+        public Button? SplitStackButton { get; set; }
     }
 
     private const string FileFilter = "Archivos SQL (*.sql)|*.sql|Todos los archivos (*.*)|*.*";
@@ -283,6 +288,22 @@ public partial class MainWindow : Window
             e.Handled = true;
             if (Current != null) Save(Current, saveAs: false);
         }
+        else if (modifiers == ModifierKeys.Alt && (e.Key == Key.System ? e.SystemKey : e.Key) is Key.Left or Key.Right or Key.Up or Key.Down
+                 && Keyboard.FocusedElement is not (ComboBox or ComboBoxItem))   // en un desplegable, Alt+↓ lo abre
+        {
+            // Alt + flecha: la pestaña actual se va a ese lado y las demás al contrario.
+            // (Ctrl + flechas no vale: en el editor es saltar por palabras y desplazar el texto.)
+            e.Handled = true;
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
+            SplitToward(sideBySide: key is Key.Left or Key.Right, activeSecond: key is Key.Right or Key.Down);
+        }
+        else if (modifiers == ModifierKeys.Alt && (e.Key == Key.System ? e.SystemKey : e.Key) is Key.Enter or Key.Return)
+        {
+            // Alt+Intro: quitar la división, sin tener que recordar hacia dónde se dividió.
+            // (Alt+Espacio no vale: es el menú de sistema de la ventana en Windows.)
+            e.Handled = true;
+            Unsplit();
+        }
         else if (e.Key == Key.R && modifiers == ModifierKeys.Control)
         {
             // Como en SSMS: Ctrl+R oculta o muestra el panel de resultados.
@@ -442,6 +463,9 @@ public partial class MainWindow : Window
             "Tab\t\t\tExpandir un fragmento (sel, upd, ij...)\n\n" +
             "Ctrl+Mayús+L\t\tFiltrar los resultados\n" +
             "Ctrl+B\t\t\tMostrar u ocultar el explorador\n" +
+            "Alt+← / →\t\tDividir la vista: la pestaña actual a la izquierda o a la derecha, el resto al otro lado\n" +
+            "Alt+↑ / ↓\t\tDividir la vista: la pestaña actual arriba o abajo, el resto al otro lado\n" +
+            "Alt+Intro\t\tQuitar la división\n" +
             "Ctrl+R\t\t\tMinimizar o restaurar el panel de resultados\n" +
             "Ctrl+Mayús+R\t\tMaximizar o restaurar el panel de resultados",
             "Atajos de teclado", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -788,7 +812,11 @@ public partial class MainWindow : Window
         closeDeleted.ToolTip = "Pestañas cuyo archivo ya no existe en disco";
         menu.Items.Add(new Separator());
         AddMenu("Dividir: izquierda / derecha", () => { Select(entry); Split(sideBySide: true); });
+        var splitSideItem = (MenuItem)menu.Items[^1];
+        splitSideItem.InputGestureText = "Alt+← / Alt+→";
         AddMenu("Dividir: arriba / abajo", () => { Select(entry); Split(sideBySide: false); });
+        var splitStackItem = (MenuItem)menu.Items[^1];
+        splitStackItem.InputGestureText = "Alt+↑ / Alt+↓";
         AddMenu("Mover al otro grupo", () => { Select(entry); MoveActiveToOtherGroup(); });
         AddMenu("Quitar la división", () => { Select(entry); Unsplit(); });
         menu.Items.Add(new Separator());
@@ -803,6 +831,8 @@ public partial class MainWindow : Window
             dockItem.Visibility = entry.Group.Area == _main ? Visibility.Collapsed : Visibility.Visible;
             bool split = entry.Group.Area.Groups.Count > 1;
             otherGroupItem.Visibility = unsplitItem.Visibility = split ? Visibility.Visible : Visibility.Collapsed;
+            splitSideItem.IsEnabled = CanSplit(entry.Group.Area, sideBySide: true);
+            splitStackItem.IsEnabled = CanSplit(entry.Group.Area, sideBySide: false);
 
             // Cada "cerrar varias" solo está disponible si hay alguna pestaña a la que afecte.
             var closable = VisualOrder(entry.Group).Where(t => !t.Pinned).ToList();
@@ -1088,7 +1118,61 @@ public partial class MainWindow : Window
     /// Divide en dos grupos la zona de la pestaña actual (o cambia la orientación si ya está dividida).
     /// La pestaña actual pasa al grupo nuevo; si es la única, el grupo nuevo abre una consulta en blanco.
     /// </summary>
+    /// <summary>
+    /// ¿Tiene efecto dividir la zona en esa orientación? No, si ya está dividida así; sí, si no está dividida
+    /// o lo está en la otra (entonces cambia la orientación).
+    /// </summary>
+    private static bool CanSplit(GroupArea area, bool sideBySide) => !(area.Groups.Count > 1 && area.SideBySide == sideBySide);
+
     private void Split(bool sideBySide)
+    {
+        SplitCore(sideBySide);
+        // Botones y menús de dividir dependen de cómo quedó la zona.
+        UpdateFloatingWindows();
+        UpdateGroupMenu();
+    }
+
+    /// <summary>
+    /// Divide la zona llevando la pestaña actual al lado indicado y todas las demás al contrario (Alt + flecha).
+    /// Si ya estaba dividida, se reordena igual: la actual sola a ese lado. Con una única pestaña, al otro lado
+    /// se abre una consulta nueva para que no quede vacío.
+    /// </summary>
+    /// <param name="activeSecond">true: derecha o abajo; false: izquierda o arriba.</param>
+    private void SplitToward(bool sideBySide, bool activeSecond)
+    {
+        var active = ActiveEntry;
+        if (active == null) return;
+
+        var area = active.Group.Area;
+        area.SideBySide = sideBySide;
+        if (area == _main)
+        {
+            AppSettings.Current.SplitSideBySide = sideBySide;
+            try { AppSettings.Current.Save(); } catch { }
+        }
+        if (area.Groups.Count < 2) CreateGroup(area);
+
+        // El primer grupo es el de la izquierda (o arriba); el segundo, el de la derecha (o abajo).
+        var target = area.Groups[activeSecond ? 1 : 0];
+        var other = area.Groups[activeSecond ? 0 : 1];
+        foreach (var entry in _tabs.Where(t => t.Group.Area == area && t != active && t.Group != other).ToList())
+            MoveToGroup(entry, other);
+        MoveToGroup(active, target);
+        if (!_tabs.Any(t => t.Group == other))
+        {
+            _activeGroup = other;
+            AddTab(active.Tab.Profile, active.Tab.CurrentDatabase);
+        }
+
+        LayoutGroups(area);
+        RefreshTabs();
+        SaveSessions();
+        Select(active);   // el foco sigue en la pestaña que se movió
+        UpdateFloatingWindows();
+        UpdateGroupMenu();
+    }
+
+    private void SplitCore(bool sideBySide)
     {
         var area = _activeGroup.Area;
         area.SideBySide = sideBySide;
@@ -1104,24 +1188,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        var entry = ActiveEntry;
-        if (entry == null) return;
-
-        var group = CreateGroup(area);
-        LayoutGroups(area);
-        if (VisualOrder(entry.Group).Count < 2)
-        {
-            _activeGroup = group;
-            AddTab(entry.Tab.Profile, entry.Tab.CurrentDatabase);
-            return;
-        }
-
-        MoveToGroup(entry, group);
-        _tabs.Remove(entry);
-        _tabs.Add(entry);
-        RefreshTabs();
-        SaveSessions();
-        entry.Tab.FocusEditor();
+        // Sin flechas no hay lado elegido: por defecto, la pestaña actual va a la derecha (en columnas)
+        // o arriba (en filas), y las demás al lado contrario.
+        SplitToward(sideBySide, activeSecond: sideBySide);
     }
 
     private void MoveActiveToOtherGroup()
@@ -1211,6 +1280,7 @@ public partial class MainWindow : Window
             {
                 ActivateArea(area);
                 action();
+                UpdateFloatingWindows();   // lo que hizo el botón puede cambiar qué botones tienen sentido
             };
             bar.Children.Add(button);
         }
@@ -1222,9 +1292,13 @@ public partial class MainWindow : Window
         area.CancelButton.IsEnabled = false;
         AddButton(ExplorerIcon.Plan, "Plan", "Plan de ejecución (Ctrl+L)", () => Current?.ExplainAsync().Watch("Plan de ejecución"));
         area.PlanButton = (Button)bar.Children[^1];
-        AddButton(ExplorerIcon.SplitSide, "Izquierda / derecha", "Dividir esta ventana: izquierda / derecha", () => Split(sideBySide: true));
-        AddButton(ExplorerIcon.SplitStack, "Arriba / abajo", "Dividir esta ventana: arriba / abajo", () => Split(sideBySide: false));
-        AddButton(ExplorerIcon.Unsplit, "Quitar división", "Volver a un solo grupo de pestañas en esta ventana", Unsplit);
+        AddButton(ExplorerIcon.SplitSide, "Izquierda / derecha", "Dividir esta ventana en columnas: la pestaña actual va a la derecha (con Alt+← o Alt+→ eliges el lado)", () => Split(sideBySide: true));
+        area.SplitSideButton = (Button)bar.Children[^1];
+        AddButton(ExplorerIcon.SplitStack, "Arriba / abajo", "Dividir esta ventana en filas: la pestaña actual va arriba (con Alt+↑ o Alt+↓ eliges el lado)", () => Split(sideBySide: false));
+        area.SplitStackButton = (Button)bar.Children[^1];
+        AddButton(ExplorerIcon.Unsplit, "Quitar división", "Volver a un solo grupo de pestañas en esta ventana (Alt+Intro)", Unsplit);
+        area.UnsplitButton = (Button)bar.Children[^1];
+        area.UnsplitButton.IsEnabled = false;   // una ventana nueva empieza sin dividir
         AddButton(ExplorerIcon.DockBack, "Devolver a la principal", "Devuelve la pestaña actual a la ventana principal",
             () => { if (ActiveEntry is { } entry) DockToMain(entry); });
 
@@ -1265,9 +1339,13 @@ public partial class MainWindow : Window
     /// <summary>"Mover al otro grupo" y "Quitar la división" solo valen con la vista dividida.</summary>
     private void UpdateGroupMenu()
     {
-        bool split = (ActiveEntry?.Group.Area ?? _main).Groups.Count > 1;
+        var area = ActiveEntry?.Group.Area ?? _main;
+        bool split = area.Groups.Count > 1;
         MoveGroupMenuItem.IsEnabled = split && ActiveEntry != null;
         UnsplitMenuItem.IsEnabled = split;
+        // La orientación que ya está puesta no se puede volver a elegir; la otra sirve para cambiarla.
+        SplitSideMenuItem.IsEnabled = CanSplit(area, sideBySide: true);
+        SplitStackMenuItem.IsEnabled = CanSplit(area, sideBySide: false);
     }
 
     // Al abrir el menú, por si la división cambió sin pasar por una actualización general.
@@ -1369,6 +1447,9 @@ public partial class MainWindow : Window
             if (area.CancelButton != null) area.CancelButton.IsEnabled = tab is { IsRunning: true };
             if (area.ExecuteButton != null) area.ExecuteButton.IsEnabled = tab is { IsRunning: false };
             if (area.PlanButton != null) area.PlanButton.IsEnabled = tab is { IsRunning: false };
+            if (area.UnsplitButton != null) area.UnsplitButton.IsEnabled = area.Groups.Count > 1;
+            if (area.SplitSideButton != null) area.SplitSideButton.IsEnabled = CanSplit(area, sideBySide: true);
+            if (area.SplitStackButton != null) area.SplitStackButton.IsEnabled = CanSplit(area, sideBySide: false);
         }
     }
 

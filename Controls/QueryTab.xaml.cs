@@ -416,7 +416,21 @@ public partial class QueryTab : UserControl
         StateChanged?.Invoke(this);
     }
 
-    public void Cancel() => _cts?.Cancel();
+    public void Cancel()
+    {
+        _cts?.Cancel();
+        // El controlador de SQLite ejecuta de forma síncrona y no atiende la señal de cancelación: hay que
+        // interrumpir la sentencia en curso directamente en el motor.
+        try
+        {
+            if (IsRunning && _conn is Microsoft.Data.Sqlite.SqliteConnection { State: System.Data.ConnectionState.Open, Handle: { } handle })
+                SQLitePCL.raw.sqlite3_interrupt(handle);
+        }
+        catch
+        {
+            // Si no se puede interrumpir, la consulta termina por su cuenta, como antes.
+        }
+    }
 
     public void Close()
     {

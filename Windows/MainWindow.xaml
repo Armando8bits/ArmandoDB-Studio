@@ -49,10 +49,10 @@
                 <MenuItem Header="Pestaña _siguiente" InputGestureText="Ctrl+Tab" Click="NextTab_Click"/>
                 <MenuItem Header="Pestaña a_nterior" InputGestureText="Ctrl+Mayús+Tab" Click="PreviousTab_Click"/>
                 <Separator/>
-                <MenuItem x:Name="SplitSideMenuItem" Header="Dividir: _izquierda / derecha" Click="SplitSideBySide_Click"/>
-                <MenuItem x:Name="SplitStackMenuItem" Header="Dividir: a_rriba / abajo" Click="SplitStacked_Click"/>
+                <MenuItem x:Name="SplitSideMenuItem" Header="Dividir: _izquierda / derecha" InputGestureText="Alt+← / Alt+→" Click="SplitSideBySide_Click"/>
+                <MenuItem x:Name="SplitStackMenuItem" Header="Dividir: a_rriba / abajo" InputGestureText="Alt+↑ / Alt+↓" Click="SplitStacked_Click"/>
                 <MenuItem x:Name="MoveGroupMenuItem" Header="_Mover pestaña al otro grupo" Click="MoveToOtherGroup_Click"/>
-                <MenuItem x:Name="UnsplitMenuItem" Header="_Quitar la división" Click="Unsplit_Click"/>
+                <MenuItem x:Name="UnsplitMenuItem" Header="_Quitar la división" InputGestureText="Alt+Intro" Click="Unsplit_Click"/>
                 <Separator/>
                 <MenuItem x:Name="FloatMenuItem" Header="Mover la pestaña a una _ventana nueva" Click="Float_Click"/>
                 <MenuItem x:Name="DockMenuItem" Header="_Devolver la pestaña a la ventana principal" Click="Dock_Click" IsEnabled="False"/>
