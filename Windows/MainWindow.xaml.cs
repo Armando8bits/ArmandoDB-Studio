@@ -56,6 +56,9 @@ public partial class MainWindow : Window
         public StatusBarView? Status { get; init; }
         /// <summary>Botón Cancelar de la ventana flotante: solo activo mientras su pestaña ejecuta algo.</summary>
         public Button? CancelButton { get; set; }
+        /// <summary>Ejecutar y Plan de la ventana flotante: se desactivan mientras su pestaña ejecuta algo.</summary>
+        public Button? ExecuteButton { get; set; }
+        public Button? PlanButton { get; set; }
     }
 
     private const string FileFilter = "Archivos SQL (*.sql)|*.sql|Todos los archivos (*.*)|*.*";
@@ -92,6 +95,25 @@ public partial class MainWindow : Window
         DisconnectButton.Content = ExplorerIcons.Header(ExplorerIcon.Disconnect, "Desconectar");
         ConnectMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Connect);
         DisconnectMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Disconnect);
+
+        // Las acciones llevan el mismo icono en la barra, en los menús y en las ventanas flotantes.
+        ExecuteButton.Content = ExplorerIcons.Header(ExplorerIcon.Execute, "Ejecutar");
+        ExplainButton.Content = ExplorerIcons.Header(ExplorerIcon.Plan, "Plan");
+        CancelButton.Content = ExplorerIcons.Header(ExplorerIcon.Cancel, "Cancelar");
+        NewQueryButton.Content = ExplorerIcons.Header(ExplorerIcon.NewQuery, "Nueva consulta");
+        UndoButton.Content = ExplorerIcons.Create(ExplorerIcon.Undo);
+        RedoButton.Content = ExplorerIcons.Create(ExplorerIcon.Redo);
+        ExecuteMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Execute);
+        ExplainMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Plan);
+        CancelMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Cancel);
+        DiagramMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Diagram);
+        SplitSideMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.SplitSide);
+        SplitStackMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.SplitStack);
+        UnsplitMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Unsplit);
+        FloatMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Float);
+        DockMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.DockBack);
+        // El resto de opciones del menú principal toman su icono por el texto (ver MenuIcons).
+        MenuIcons.Apply(MainMenu);
         SnippetsEnabledItem.IsChecked = AppSettings.Current.SnippetsEnabled;
         AutoCompleteItem.IsChecked = AppSettings.Current.AutoCompleteEnabled;
         ConfirmDangerousItem.IsChecked = AppSettings.Current.ConfirmDangerous;
@@ -628,6 +650,8 @@ public partial class MainWindow : Window
 
         var title = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         var pin = HeaderButton("📌", "Anclar pestaña");
+        // La chincheta en color (la misma del menú): viva en las pestañas ancladas, atenuada en las demás.
+        pin.Content = new Viewbox { Width = 13, Height = 13, Child = ExplorerIcons.Create(ExplorerIcon.Pin) };
         var close = HeaderButton("✕", "Cerrar (Ctrl+W)");
         var panel = new StackPanel { Orientation = Orientation.Horizontal };
         panel.Children.Add(title);
@@ -719,13 +743,34 @@ public partial class MainWindow : Window
             item.Click += (_, _) => action();
             menu.Items.Add(item);
         }
+        // Cierra varias pestañas de este grupo; se detiene si en alguna se cancela el "¿guardar los cambios?".
+        // Las ancladas nunca se cierran en bloque: para eso se anclan.
+        void CloseMany(Func<TabEntry, bool> which)
+        {
+            foreach (var other in VisualOrder(entry.Group).Where(t => !t.Pinned && which(t)).ToList())
+                if (!CloseTab(other)) break;
+        }
+        // Pestañas a la derecha de esta, en el orden en que se ven.
+        List<TabEntry> ToTheRight() => VisualOrder(entry.Group).SkipWhile(t => t != entry).Skip(1).ToList();
+        // Sin cambios pendientes: cerrarla no pierde nada.
+        static bool Unmodified(TabEntry t) => !(t.Tab.IsDirty && t.Tab.HasText);
+        // Su archivo ya no existe en disco (se borró o se movió desde fuera).
+        static bool FileDeleted(TabEntry t) => t.Tab.FilePath is { Length: > 0 } path && !File.Exists(path);
+
         AddMenu("Anclar o desanclar", () => TogglePin(entry));
         AddMenu("Cerrar", () => CloseTab(entry));
-        AddMenu("Cerrar las demás (excepto ancladas)", () =>
-        {
-            foreach (var other in _tabs.Where(t => t != entry && !t.Pinned && t.Group == entry.Group).ToList())
-                if (!CloseTab(other)) break;
-        });
+        ((MenuItem)menu.Items[^1]).InputGestureText = "Ctrl+W";
+        AddMenu("Cerrar las demás (excepto ancladas)", () => CloseMany(t => t != entry));
+        var closeOthers = (MenuItem)menu.Items[^1];
+        AddMenu("Cerrar las de la derecha", () => { var right = ToTheRight(); CloseMany(right.Contains); });
+        var closeRight = (MenuItem)menu.Items[^1];
+        AddMenu("Cerrar las que no tienen cambios", () => CloseMany(Unmodified));
+        var closeUnmodified = (MenuItem)menu.Items[^1];
+        AddMenu("Cerrar las de la derecha que no tienen cambios", () => { var right = ToTheRight(); CloseMany(t => right.Contains(t) && Unmodified(t)); });
+        var closeUnmodifiedRight = (MenuItem)menu.Items[^1];
+        AddMenu("Cerrar las de archivos borrados", () => CloseMany(FileDeleted));
+        var closeDeleted = (MenuItem)menu.Items[^1];
+        closeDeleted.ToolTip = "Pestañas cuyo archivo ya no existe en disco";
         menu.Items.Add(new Separator());
         AddMenu("Dividir: izquierda / derecha", () => { Select(entry); Split(sideBySide: true); });
         AddMenu("Dividir: arriba / abajo", () => { Select(entry); Split(sideBySide: false); });
@@ -743,7 +788,17 @@ public partial class MainWindow : Window
             dockItem.Visibility = entry.Group.Area == _main ? Visibility.Collapsed : Visibility.Visible;
             bool split = entry.Group.Area.Groups.Count > 1;
             otherGroupItem.Visibility = unsplitItem.Visibility = split ? Visibility.Visible : Visibility.Collapsed;
+
+            // Cada "cerrar varias" solo está disponible si hay alguna pestaña a la que afecte.
+            var closable = VisualOrder(entry.Group).Where(t => !t.Pinned).ToList();
+            var right = ToTheRight();
+            closeOthers.IsEnabled = closable.Any(t => t != entry);
+            closeRight.IsEnabled = closable.Any(right.Contains);
+            closeUnmodified.IsEnabled = closable.Any(Unmodified);
+            closeUnmodifiedRight.IsEnabled = closable.Any(t => right.Contains(t) && Unmodified(t));
+            closeDeleted.IsEnabled = closable.Any(FileDeleted);
         };
+        MenuIcons.Apply(menu);
         header.ContextMenu = menu;
 
         tab.Visibility = Visibility.Collapsed;
@@ -1131,9 +1186,12 @@ public partial class MainWindow : Window
 
         // Barra propia con lo esencial: los botones actúan sobre la pestaña de esta ventana.
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 3, 4, 3) };
-        void AddButton(string text, string toolTip, Action action)
+        void AddButton(ExplorerIcon icon, string text, string toolTip, Action action)
         {
-            var button = new Button { Content = text, ToolTip = toolTip, Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 4, 0) };
+            // Mismo icono y texto que la acción equivalente de la ventana principal.
+            var button = new Button { Content = ExplorerIcons.Header(icon, text), ToolTip = toolTip, Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 0, 4, 0) };
+            // El tema no atenúa los iconos de color de un botón deshabilitado.
+            button.IsEnabledChanged += (_, _) => button.Opacity = button.IsEnabled ? 1 : 0.4;
             button.Click += (_, _) =>
             {
                 ActivateArea(area);
@@ -1141,15 +1199,18 @@ public partial class MainWindow : Window
             };
             bar.Children.Add(button);
         }
-        AddButton("▶ Ejecutar", "Ejecutar (Ctrl+E o F5)", () => ExecuteCurrentAsync().Watch("Ejecutar la consulta"));
-        AddButton("Plan", "Plan de ejecución (Ctrl+L)", () => Current?.ExplainAsync().Watch("Plan de ejecución"));
-        AddButton("■ Cancelar", "Cancelar la ejecución (Alt+Pausa)", () => Current?.Cancel());
+        // Orden: ejecutar, cancelar y plan (el mismo que en la ventana principal).
+        AddButton(ExplorerIcon.Execute, "Ejecutar", "Ejecutar (Ctrl+E o F5)", () => ExecuteCurrentAsync().Watch("Ejecutar la consulta"));
+        area.ExecuteButton = (Button)bar.Children[^1];
+        AddButton(ExplorerIcon.Cancel, "Cancelar", "Cancelar la ejecución (Alt+Pausa)", () => Current?.Cancel());
         area.CancelButton = (Button)bar.Children[^1];
         area.CancelButton.IsEnabled = false;
-        AddButton("Dividir ◧", "Dividir esta ventana: izquierda / derecha", () => Split(sideBySide: true));
-        AddButton("Dividir ⬒", "Dividir esta ventana: arriba / abajo", () => Split(sideBySide: false));
-        AddButton("Quitar división", "Volver a un solo grupo de pestañas en esta ventana", Unsplit);
-        AddButton("Devolver a la ventana principal", "Devuelve la pestaña actual a la ventana principal",
+        AddButton(ExplorerIcon.Plan, "Plan", "Plan de ejecución (Ctrl+L)", () => Current?.ExplainAsync().Watch("Plan de ejecución"));
+        area.PlanButton = (Button)bar.Children[^1];
+        AddButton(ExplorerIcon.SplitSide, "Izquierda / derecha", "Dividir esta ventana: izquierda / derecha", () => Split(sideBySide: true));
+        AddButton(ExplorerIcon.SplitStack, "Arriba / abajo", "Dividir esta ventana: arriba / abajo", () => Split(sideBySide: false));
+        AddButton(ExplorerIcon.Unsplit, "Quitar división", "Volver a un solo grupo de pestañas en esta ventana", Unsplit);
+        AddButton(ExplorerIcon.DockBack, "Devolver a la principal", "Devuelve la pestaña actual a la ventana principal",
             () => { if (ActiveEntry is { } entry) DockToMain(entry); });
 
         var root = new DockPanel();
@@ -1186,6 +1247,17 @@ public partial class MainWindow : Window
 
     private void SplitSideBySide_Click(object sender, RoutedEventArgs e) => Split(sideBySide: true);
     private void SplitStacked_Click(object sender, RoutedEventArgs e) => Split(sideBySide: false);
+    /// <summary>"Mover al otro grupo" y "Quitar la división" solo valen con la vista dividida.</summary>
+    private void UpdateGroupMenu()
+    {
+        bool split = (ActiveEntry?.Group.Area ?? _main).Groups.Count > 1;
+        MoveGroupMenuItem.IsEnabled = split && ActiveEntry != null;
+        UnsplitMenuItem.IsEnabled = split;
+    }
+
+    // Al abrir el menú, por si la división cambió sin pasar por una actualización general.
+    private void WindowMenu_SubmenuOpened(object sender, RoutedEventArgs e) => UpdateGroupMenu();
+
     private void MoveToOtherGroup_Click(object sender, RoutedEventArgs e) => MoveActiveToOtherGroup();
     private void Unsplit_Click(object sender, RoutedEventArgs e) => Unsplit();
 
@@ -1280,6 +1352,8 @@ public partial class MainWindow : Window
             area.Window.Title = tab != null ? $"{tab.Title} - {TargetLabel(tab)} - {App.Name}" : App.Name;
             area.Status.Update(tab, "Listo");
             if (area.CancelButton != null) area.CancelButton.IsEnabled = tab is { IsRunning: true };
+            if (area.ExecuteButton != null) area.ExecuteButton.IsEnabled = tab is { IsRunning: false };
+            if (area.PlanButton != null) area.PlanButton.IsEnabled = tab is { IsRunning: false };
         }
     }
 
@@ -1318,11 +1392,13 @@ public partial class MainWindow : Window
         DatabaseCombo.IsEnabled = tab is { IsRunning: false };
         _syncingCombo = false;
 
-        ExecuteButton.IsEnabled = ExplainButton.IsEnabled = tab is { IsRunning: false };
+        // Mientras una consulta está en curso solo se puede cancelar; ejecutar y plan vuelven al terminar.
+        ExecuteButton.IsEnabled = ExplainButton.IsEnabled = ExecuteMenuItem.IsEnabled = ExplainMenuItem.IsEnabled = tab is { IsRunning: false };
         CancelButton.IsEnabled = CancelMenuItem.IsEnabled = tab is { IsRunning: true };
-        DisconnectButton.IsEnabled = DiagramButton.IsEnabled = _databases.Count > 0;
+        DisconnectButton.IsEnabled = DiagramMenuItem.IsEnabled = _databases.Count > 0;
+        UpdateGroupMenu();
         // El tema atenúa el texto de un botón deshabilitado, pero no sus iconos de color: se atenúan aquí.
-        foreach (var button in new[] { ExecuteButton, ExplainButton, CancelButton, DiagramButton })
+        foreach (var button in new[] { ExecuteButton, ExplainButton, CancelButton })
             ((UIElement)button.Content).Opacity = button.IsEnabled ? 1 : 0.4;
 
         // La barra de la principal muestra la pestaña visible de esta ventana (no la de una flotante).
@@ -1333,6 +1409,9 @@ public partial class MainWindow : Window
         // Deshacer y Rehacer solo están disponibles si hay algo que deshacer o rehacer.
         UndoButton.IsEnabled = UndoMenuItem.IsEnabled = tab?.SqlEditor.CanUndo == true;
         RedoButton.IsEnabled = RedoMenuItem.IsEnabled = tab?.SqlEditor.CanRedo == true;
+        // En la barra, el tema apenas distingue un botón deshabilitado: se atenúa a propósito.
+        UndoButton.Opacity = UndoButton.IsEnabled ? 1 : 0.35;
+        RedoButton.Opacity = RedoButton.IsEnabled ? 1 : 0.35;
         DockMenuItem.IsEnabled = ActiveEntry is { } active && active.Group.Area != _main;
         UpdateFloatingWindows();
     }
@@ -1513,6 +1592,7 @@ public partial class MainWindow : Window
                 Add("Generar script CREATE", () => ScriptCreateAsync(node).Watch("Generar script"));
                 break;
         }
+        MenuIcons.Apply(menu);
         return menu;
     }
 

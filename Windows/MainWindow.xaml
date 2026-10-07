@@ -5,7 +5,7 @@
         Title="ArmandoDB Studio" Icon="pack://application:,,,/ArmandoDBStudio;component/app.ico" Width="1280" Height="800" WindowStartupLocation="CenterScreen" WindowState="Maximized"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown">
     <DockPanel>
-        <Menu DockPanel.Dock="Top">
+        <Menu DockPanel.Dock="Top" x:Name="MainMenu">
             <MenuItem Header="_Archivo">
                 <MenuItem x:Name="ConnectMenuItem" Header="_Conectar..." Click="Connect_Click"/>
                 <MenuItem x:Name="DisconnectMenuItem" Header="_Desconectar" Click="Disconnect_Click"/>
@@ -34,29 +34,29 @@
                 <MenuItem Header="_Fragmentos de código..." Click="Snippets_Click"/>
             </MenuItem>
             <MenuItem Header="_Consulta">
-                <MenuItem Header="_Ejecutar" InputGestureText="Ctrl+E / F5" Click="Execute_Click"/>
-                <MenuItem Header="Mostrar el _plan de ejecución" InputGestureText="Ctrl+L" Click="Explain_Click"/>
+                <MenuItem x:Name="ExecuteMenuItem" Header="_Ejecutar" InputGestureText="Ctrl+E / F5" Click="Execute_Click"/>
                 <MenuItem x:Name="CancelMenuItem" Header="_Cancelar ejecución" InputGestureText="Alt+Pausa" Click="Cancel_Click" IsEnabled="False"/>
+                <MenuItem x:Name="ExplainMenuItem" Header="Mostrar el _plan de ejecución" InputGestureText="Ctrl+L" Click="Explain_Click"/>
                 <Separator/>
                 <MenuItem Header="_Filtrar resultados" InputGestureText="Ctrl+Mayús+L" Click="ToggleResultFilter_Click"/>
             </MenuItem>
-            <MenuItem Header="_Ventana">
+            <MenuItem Header="_Ventana" SubmenuOpened="WindowMenu_SubmenuOpened">
                 <MenuItem Header="Mostrar u ocultar el _explorador de objetos" InputGestureText="Ctrl+B" Click="ToggleExplorer_Click"/>
                 <Separator/>
                 <MenuItem Header="_Anclar o desanclar pestaña" Click="TogglePin_Click"/>
                 <MenuItem Header="Pestaña _siguiente" InputGestureText="Ctrl+Tab" Click="NextTab_Click"/>
                 <MenuItem Header="Pestaña a_nterior" InputGestureText="Ctrl+Mayús+Tab" Click="PreviousTab_Click"/>
                 <Separator/>
-                <MenuItem Header="Dividir: _izquierda / derecha" Click="SplitSideBySide_Click"/>
-                <MenuItem Header="Dividir: a_rriba / abajo" Click="SplitStacked_Click"/>
-                <MenuItem Header="_Mover pestaña al otro grupo" Click="MoveToOtherGroup_Click"/>
-                <MenuItem Header="_Quitar la división" Click="Unsplit_Click"/>
+                <MenuItem x:Name="SplitSideMenuItem" Header="Dividir: _izquierda / derecha" Click="SplitSideBySide_Click"/>
+                <MenuItem x:Name="SplitStackMenuItem" Header="Dividir: a_rriba / abajo" Click="SplitStacked_Click"/>
+                <MenuItem x:Name="MoveGroupMenuItem" Header="_Mover pestaña al otro grupo" Click="MoveToOtherGroup_Click"/>
+                <MenuItem x:Name="UnsplitMenuItem" Header="_Quitar la división" Click="Unsplit_Click"/>
                 <Separator/>
-                <MenuItem Header="Mover la pestaña a una _ventana nueva" Click="Float_Click"/>
+                <MenuItem x:Name="FloatMenuItem" Header="Mover la pestaña a una _ventana nueva" Click="Float_Click"/>
                 <MenuItem x:Name="DockMenuItem" Header="_Devolver la pestaña a la ventana principal" Click="Dock_Click" IsEnabled="False"/>
             </MenuItem>
             <MenuItem Header="_Herramientas">
-                <MenuItem Header="_Diagrama de la base de datos..." Click="Diagram_Click"/>
+                <MenuItem x:Name="DiagramMenuItem" Header="_Diagrama de la base de datos..." Click="Diagram_Click"/>
                 <MenuItem Header="_Monitor de procesos (MySQL)..." Click="ProcessMonitor_Click"/>
                 <Separator/>
                 <MenuItem Header="_Fuente y tamaño..." Click="Font_Click"/>
@@ -89,52 +89,25 @@
                 <Button x:Name="ConnectButton" Click="Connect_Click" Padding="6,2"/>
                 <Button x:Name="DisconnectButton" Click="Disconnect_Click" Padding="6,2" IsEnabled="False"
                         ToolTip="Desconectar la conexión seleccionada en el explorador (o la de la pestaña actual)"/>
-                <Button Content="Nueva consulta" Click="NewQuery_Click" Padding="6,2" ToolTip="Ctrl+N"/>
+                <!-- Contenido (icono, y texto si lo lleva) puesto en código, con los mismos iconos que sus menús. -->
+                <Button x:Name="NewQueryButton" Click="NewQuery_Click" Padding="6,2" ToolTip="Nueva consulta (Ctrl+N)"/>
                 <Separator/>
-                <Button x:Name="UndoButton" Content="↶" Click="Undo_Click" Padding="7,0,7,2" FontSize="15" IsEnabled="False"
+                <Button x:Name="UndoButton" Click="Undo_Click" Padding="6,3" IsEnabled="False"
                         ToolTip="Deshacer (Ctrl+Z)" ToolTipService.ShowOnDisabled="True"/>
-                <Button x:Name="RedoButton" Content="↷" Click="Redo_Click" Padding="7,0,7,2" FontSize="15" IsEnabled="False"
+                <Button x:Name="RedoButton" Click="Redo_Click" Padding="6,3" IsEnabled="False"
                         ToolTip="Rehacer (Ctrl+Y)" ToolTipService.ShowOnDisabled="True"/>
                 <Separator/>
                 <ComboBox x:Name="DatabaseCombo" Width="270"
                           ToolTip="Base de datos de la pestaña actual. Elegir una de otra conexión cambia la pestaña a esa conexión."
                           SelectionChanged="DatabaseCombo_SelectionChanged"/>
                 <Separator/>
-                <Button x:Name="ExecuteButton" Click="Execute_Click" Padding="6,2" ToolTip="Ejecutar (Ctrl+E o F5): la selección o todo el contenido">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="▶" Foreground="#FF2E9E4F" Margin="0,0,4,0"/>
-                        <TextBlock Text="Ejecutar"/>
-                    </StackPanel>
-                </Button>
+                <!-- El contenido (icono + texto) de estos botones se pone en código, con los iconos compartidos:
+                     así son idénticos a los de las ventanas flotantes y a los de los menús. -->
+                <!-- Orden: ejecutar, cancelar y plan (el mismo en las ventanas flotantes). -->
+                <Button x:Name="ExecuteButton" Click="Execute_Click" Padding="6,2" ToolTip="Ejecutar (Ctrl+E o F5): la selección o todo el contenido"/>
+                <Button x:Name="CancelButton" Click="Cancel_Click" Padding="6,2" IsEnabled="False" ToolTip="Cancelar ejecución (Alt+Pausa)"/>
                 <Button x:Name="ExplainButton" Click="Explain_Click" Padding="6,2"
-                        ToolTip="Plan de ejecución estimado (Ctrl+L): de la selección o de todo el contenido, sin ejecutar la consulta">
-                    <StackPanel Orientation="Horizontal">
-                        <!-- Árbol de nodos -->
-                        <Canvas Width="14" Height="14" Margin="0,0,4,0" VerticalAlignment="Center">
-                            <Path Data="M4,3.5 V10.5 H9 M4,7 H9" Stroke="#FF3794FF" StrokeThickness="1.2"/>
-                            <Path Data="M1.5,1 H6.5 V5 H1.5 Z M9,5 H13 V9 H9 Z M9,8.5 H13 V12.5 H9 Z" Fill="#FF3794FF"/>
-                        </Canvas>
-                        <TextBlock Text="Plan"/>
-                    </StackPanel>
-                </Button>
-                <Button x:Name="CancelButton" Click="Cancel_Click" Padding="6,2" IsEnabled="False" ToolTip="Cancelar ejecución (Alt+Pausa)">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="■" Foreground="Firebrick" Margin="0,0,4,0"/>
-                        <TextBlock Text="Cancelar"/>
-                    </StackPanel>
-                </Button>
-                <Separator/>
-                <Button x:Name="DiagramButton" Click="Diagram_Click" Padding="6,2" IsEnabled="False" ToolTipService.ShowOnDisabled="True"
-                        ToolTip="Diagrama de tablas y relaciones de la base seleccionada en el explorador (o la de la pestaña actual)">
-                    <StackPanel Orientation="Horizontal">
-                        <!-- Dos tablas relacionadas -->
-                        <Canvas Width="14" Height="14" Margin="0,0,4,0" VerticalAlignment="Center">
-                            <Path Data="M6,4 H8.5 V10.5 H9" Stroke="#FF3794FF" StrokeThickness="1.2"/>
-                            <Path Data="M1,1.5 H6 V6.5 H1 Z M9,8 H13.5 V13 H9 Z" Fill="#FF3794FF"/>
-                        </Canvas>
-                        <TextBlock Text="Diagrama"/>
-                    </StackPanel>
-                </Button>
+                        ToolTip="Plan de ejecución estimado (Ctrl+L): de la selección o de todo el contenido, sin ejecutar la consulta"/>
             </ToolBar>
         </ToolBarTray>
 

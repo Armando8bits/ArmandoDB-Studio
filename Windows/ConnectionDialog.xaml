@@ -230,7 +230,8 @@
                               Checked="SshCheck_Changed" Unchecked="SshCheck_Changed"/>
                     <Grid x:Name="SshPanel" IsEnabled="False">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="104"/>
+                            <!-- Más ancha que la de la pestaña del servidor: "Contraseña SSH:" y "Frase de la clave:" no cabían. -->
+                            <ColumnDefinition Width="130"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>

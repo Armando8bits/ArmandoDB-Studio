@@ -5,9 +5,18 @@ using System.Windows.Shapes;
 
 namespace MySmdb;
 
-public enum ExplorerIcon { Server, Database, Table, View, Column, KeyColumn, Folder, Procedure, Function, Trigger, Index, Connect, Disconnect }
+public enum ExplorerIcon
+{
+    Server, Database, Table, View, Column, KeyColumn, Folder, Procedure, Function, Trigger, Index, Connect, Disconnect,
+    // Acciones de la barra y los menús (los mismos en la ventana principal y en las flotantes).
+    Execute, Plan, Cancel, Diagram, SplitSide, SplitStack, Unsplit, Float, DockBack,
+    // Resto de opciones de menú.
+    NewQuery, Open, Save, SaveAs, Close, Exit, Undo, Redo, Find, Replace, Format, Complete, Snippets, Filter, Panel, Pin,
+    Next, Previous, MoveGroup, Monitor, Font, Confirm, Theme, Keyboard, Log, About, Refresh, Backup, Restore, Import,
+    Copy, CopyHeaders, SelectAll, SortAscending, SortDescending, ClearSort,
+}
 
-/// <summary>Iconos vectoriales (16x16) del explorador de objetos, dibujados en código.</summary>
+/// <summary>Iconos vectoriales (16x16) del explorador de objetos y de las acciones, dibujados en código.</summary>
 public static class ExplorerIcons
 {
     private static readonly Brush Gold = Frozen(0xF2, 0xC4, 0x4D);
@@ -32,6 +41,10 @@ public static class ExplorerIcons
     private static readonly Brush TealDark = Frozen(0x13, 0x6B, 0x60);
     private static readonly Brush Orange = Frozen(0xF2, 0x8C, 0x28);
     private static readonly Brush OrangeDark = Frozen(0xA0, 0x52, 0x0A);
+    private static readonly Brush RunGreen = Frozen(0x2E, 0x9E, 0x4F);
+    private static readonly Brush StopRed = Frozen(0xB2, 0x22, 0x22);
+    private static readonly Brush Accent = Frozen(0x37, 0x94, 0xFF);
+    private static readonly Brush AccentLight = Frozen(0xBF, 0xDD, 0xFF);
 
     private static Brush Frozen(byte r, byte g, byte b)
     {
@@ -140,6 +153,254 @@ public static class ExplorerIcons
                 Add("M5.5,1.5 V5 M10.5,1.5 V5 M8,12 V15", null, SteelDark, 1.8);
                 Add("M3.5,5 H12.5 V8 C12.5,10.5 10.5,12 8,12 C5.5,12 3.5,10.5 3.5,8 Z", Steel, SteelDark);
                 Add("M2.5,14 L13.5,2", null, Red, 2);
+                break;
+
+            case ExplorerIcon.Execute:
+                // Triángulo verde de "reproducir".
+                Add("M4,2.5 L13.5,8 L4,13.5 Z", RunGreen, RunGreen);
+                break;
+
+            case ExplorerIcon.Cancel:
+                // Cuadrado rojo de "detener".
+                Add("M3.5,3.5 H12.5 V12.5 H3.5 Z", StopRed, StopRed);
+                break;
+
+            case ExplorerIcon.Plan:
+                // Árbol de pasos: un nodo y dos de los que se alimenta.
+                Add("M4.5,5 V12 H9.5 M4.5,8 H9.5", null, Accent, 1.3);
+                Add("M1.5,1.5 H7.5 V5.5 H1.5 Z M9.5,6 H14.5 V10 H9.5 Z M9.5,10.5 H14.5 V14.5 H9.5 Z", Accent, null);
+                break;
+
+            case ExplorerIcon.Diagram:
+                // Dos tablas relacionadas.
+                Add("M7,4.5 H9 V11.5 H10", null, Accent, 1.3);
+                Add("M1.5,2 H7 V7.5 H1.5 Z M10,9 H14.5 V14 H10 Z", Accent, null);
+                break;
+
+            case ExplorerIcon.SplitSide:
+                // Ventana partida en izquierda / derecha, con una mitad resaltada.
+                Add("M1.5,2.5 H8 V13.5 H1.5 Z", Accent, null);
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z M8,2.5 V13.5", null, SteelDark);
+                break;
+
+            case ExplorerIcon.SplitStack:
+                // Ventana partida en arriba / abajo.
+                Add("M1.5,2.5 H14.5 V8 H1.5 Z", Accent, null);
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z M1.5,8 H14.5", null, SteelDark);
+                break;
+
+            case ExplorerIcon.Unsplit:
+                // Una sola zona, sin división.
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z", AccentLight, SteelDark);
+                Add("M1.5,2.5 H14.5 V5 H1.5 Z", Accent, SteelDark);
+                break;
+
+            case ExplorerIcon.Float:
+                // Una ventana que sale de otra.
+                Add("M1.5,5.5 H10.5 V14.5 H1.5 Z", Brushes.White, SteelDark);
+                Add("M5.5,1.5 H14.5 V10.5 H5.5 Z", AccentLight, SteelDark);
+                Add("M5.5,1.5 H14.5 V4 H5.5 Z", Accent, SteelDark);
+                break;
+
+            case ExplorerIcon.DockBack:
+                // Flecha que vuelve a entrar en la ventana.
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z", Brushes.White, SteelDark);
+                Add("M1.5,2.5 H14.5 V5 H1.5 Z", Accent, SteelDark);
+                Add("M12,7 L7,11.5 M7,8 V11.5 H10.5", null, RunGreen, 1.6);
+                break;
+
+            case ExplorerIcon.NewQuery:
+                // Hoja nueva con un "+".
+                Add("M2.5,1.5 H8.5 L11.5,4.5 V14.5 H2.5 Z", Brushes.White, SteelDark);
+                Add("M10,11 H15 M12.5,8.5 V13.5", null, RunGreen, 2);
+                break;
+
+            case ExplorerIcon.Open:
+                // Carpeta abierta.
+                Add("M1.5,3.5 H6 L7.5,5 H13 V7 H3.5 L1.5,13.5 Z", GoldLight, FolderDark);
+                Add("M1.5,13.5 L3.5,7 H15 L13,13.5 Z", FolderYellow, FolderDark);
+                break;
+
+            case ExplorerIcon.Save:
+            case ExplorerIcon.SaveAs:
+                // Disquete; "guardar como" lleva además un lápiz.
+                Add("M2.5,2.5 H11.5 L13.5,4.5 V13.5 H2.5 Z", Blue, SteelDark);
+                Add("M5,2.5 H10.5 V6 H5 Z", Brushes.White, null);
+                Add("M4.5,9 H11.5 V13.5 H4.5 Z", BlueLight, null);
+                if (icon == ExplorerIcon.SaveAs) Add("M9.5,14.5 L15,9", null, Orange, 2.4);
+                break;
+
+            case ExplorerIcon.Close:
+                Add("M4,4 L12,12 M12,4 L4,12", null, Red, 2);
+                break;
+
+            case ExplorerIcon.Exit:
+                // Puerta y flecha de salida.
+                Add("M2.5,2 H8.5 V14 H2.5 Z", GrayLight, SteelDark);
+                Add("M7,8 H14.5 M12,5.5 L14.5,8 L12,10.5", null, Red, 1.7);
+                break;
+
+            case ExplorerIcon.Undo:
+                Add("M3,6.5 H10 A3.5,3.5 0 0 1 10,13.5 H6.5", null, Accent, 1.8);
+                Add("M5.8,3.5 L2.8,6.5 L5.8,9.5", null, Accent, 1.8);
+                break;
+
+            case ExplorerIcon.Redo:
+                Add("M13,6.5 H6 A3.5,3.5 0 0 0 6,13.5 H9.5", null, Accent, 1.8);
+                Add("M10.2,3.5 L13.2,6.5 L10.2,9.5", null, Accent, 1.8);
+                break;
+
+            case ExplorerIcon.Find:
+                // Lupa.
+                Add("M2.5,6.5 A4,4 0 1 0 10.5,6.5 A4,4 0 1 0 2.5,6.5 Z", BlueLight, SteelDark, 1.5);
+                Add("M9.6,9.6 L14,14", null, SteelDark, 2.2);
+                break;
+
+            case ExplorerIcon.Replace:
+                // Dos flechas que se intercambian.
+                Add("M2.5,5 H12.5 M10,2.5 L12.5,5 L10,7.5", null, Accent, 1.7);
+                Add("M13.5,11 H3.5 M6,8.5 L3.5,11 L6,13.5", null, Orange, 1.7);
+                break;
+
+            case ExplorerIcon.Format:
+                // Líneas con sangría.
+                Add("M2,3 H14 M5,6.5 H14 M5,10 H11 M2,13.5 H14", null, Accent, 1.6);
+                break;
+
+            case ExplorerIcon.Complete:
+                // Lista de sugerencias con una resaltada.
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z", Brushes.White, SteelDark);
+                Add("M2.5,6.5 H13.5 V9.5 H2.5 Z", AccentLight, null);
+                Add("M3.5,5 H9 M3.5,8 H12 M3.5,11 H8", null, Accent, 1.3);
+                break;
+
+            case ExplorerIcon.Snippets:
+                // Llaves de código.
+                Add("M6,2 C4,2 4.5,4.5 4.5,6 C4.5,7.5 3,8 3,8 C3,8 4.5,8.5 4.5,10 C4.5,11.5 4,14 6,14", null, Violet, 1.6);
+                Add("M10,2 C12,2 11.5,4.5 11.5,6 C11.5,7.5 13,8 13,8 C13,8 11.5,8.5 11.5,10 C11.5,11.5 12,14 10,14", null, Violet, 1.6);
+                break;
+
+            case ExplorerIcon.Filter:
+                // Embudo.
+                Add("M2,2.5 H14 L9.5,8 V13.5 L6.5,12 V8 Z", AccentLight, Accent, 1.2);
+                break;
+
+            case ExplorerIcon.Panel:
+                // Ventana con su panel lateral.
+                Add("M1.5,2.5 H6 V13.5 H1.5 Z", Accent, null);
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z M6,2.5 V13.5", null, SteelDark);
+                break;
+
+            case ExplorerIcon.Pin:
+                // Chincheta.
+                Add("M6,2 H10 L9.5,7 L12,9.5 H4 L6.5,7 Z", Orange, OrangeDark);
+                Add("M8,9.5 V14.5", null, OrangeDark, 1.5);
+                break;
+
+            case ExplorerIcon.Next:
+                Add("M3,8 H12.5 M9,4.5 L12.5,8 L9,11.5", null, Accent, 1.8);
+                break;
+
+            case ExplorerIcon.Previous:
+                Add("M13,8 H3.5 M7,4.5 L3.5,8 L7,11.5", null, Accent, 1.8);
+                break;
+
+            case ExplorerIcon.MoveGroup:
+                // De una mitad de la ventana a la otra.
+                Add("M1.5,2.5 H14.5 V13.5 H1.5 Z M8,2.5 V13.5", null, SteelDark);
+                Add("M4,8 H12 M10,6 L12,8 L10,10", null, RunGreen, 1.7);
+                break;
+
+            case ExplorerIcon.Monitor:
+                // Pulso de actividad.
+                Add("M1.5,8.5 H4.5 L6.5,3 L9.5,13.5 L11.5,8.5 H14.5", null, RunGreen, 1.7);
+                break;
+
+            case ExplorerIcon.Font:
+                canvas.Children.Add(new TextBlock
+                {
+                    Text = "Aa", FontSize = 11, FontWeight = FontWeights.Bold, Foreground = Accent,
+                    Width = 16, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 0.5, 0, 0),
+                });
+                break;
+
+            case ExplorerIcon.Confirm:
+                // Escudo con una exclamación.
+                Add("M8,1.5 L13.5,3.5 V8 C13.5,11 11,13.5 8,14.5 C5,13.5 2.5,11 2.5,8 V3.5 Z", Orange, OrangeDark);
+                Add("M8,5 V9 M8,11.3 V11.6", null, Brushes.White, 1.8);
+                break;
+
+            case ExplorerIcon.Theme:
+                // Círculo mitad claro, mitad oscuro.
+                Add("M2,8 A6,6 0 1 0 14,8 A6,6 0 1 0 2,8 Z", Brushes.White, SteelDark, 1.3);
+                Add("M8,2 A6,6 0 0 0 8,14 Z", SteelDark, null);
+                break;
+
+            case ExplorerIcon.Keyboard:
+                Add("M1.5,4.5 H14.5 V12 H1.5 Z", GrayLight, SteelDark);
+                Add("M3.5,7 H4.5 M6.2,7 H7.2 M8.9,7 H9.9 M11.6,7 H12.6 M4.5,9.8 H11.5", null, SteelDark, 1.3);
+                break;
+
+            case ExplorerIcon.Log:
+                // Hoja con una exclamación: el registro de errores.
+                Add("M3,1.5 H10 L13,4.5 V14.5 H3 Z", Brushes.White, SteelDark);
+                Add("M8,6 V10 M8,12.2 V12.5", null, Red, 1.8);
+                break;
+
+            case ExplorerIcon.About:
+                Add("M2,8 A6,6 0 1 0 14,8 A6,6 0 1 0 2,8 Z", Accent, null);
+                Add("M8,7.2 V11.5 M8,4.6 V4.9", null, Brushes.White, 1.9);
+                break;
+
+            case ExplorerIcon.Refresh:
+                // Flecha circular.
+                Add("M13,8.5 A5,5 0 1 1 10.8,4.2", null, RunGreen, 1.8);
+                Add("M11.8,1.2 L11,4.6 L7.8,3.8", null, RunGreen, 1.8);
+                break;
+
+            case ExplorerIcon.Backup:
+            case ExplorerIcon.Restore:
+                // Base de datos con una flecha: hacia abajo (sacar una copia) o hacia arriba (volver a cargarla).
+                Add("M1.5,3.5 V10 C1.5,11.4 3.5,12.5 6,12.5 C8.5,12.5 10.5,11.4 10.5,10 V3.5 Z", Gold, GoldDark);
+                Add("M1.5,3.5 C1.5,2.1 3.5,1 6,1 C8.5,1 10.5,2.1 10.5,3.5 C10.5,4.9 8.5,6 6,6 C3.5,6 1.5,4.9 1.5,3.5 Z", GoldLight, GoldDark);
+                if (icon == ExplorerIcon.Backup) Add("M12.8,7.5 V14 M10.3,11.5 L12.8,14 L15.3,11.5", null, RunGreen, 1.8);
+                else Add("M12.8,14.5 V8 M10.3,10.5 L12.8,8 L15.3,10.5", null, Accent, 1.8);
+                break;
+
+            case ExplorerIcon.Import:
+                // Tabla a la que se añaden filas.
+                AddGrid(Add, Blue, BlueLight);
+                Add("M9.5,9.5 H15.5 V15.5 H9.5 Z", Brushes.White, null);
+                Add("M10,12.5 H15 M12.5,10 V15", null, RunGreen, 2);
+                break;
+
+            case ExplorerIcon.Copy:
+            case ExplorerIcon.CopyHeaders:
+                // Dos hojas; "con encabezados" resalta la primera fila.
+                Add("M2.5,1.5 H10.5 V11.5 H2.5 Z", BlueLight, SteelDark);
+                Add("M5.5,4.5 H13.5 V14.5 H5.5 Z", Brushes.White, SteelDark);
+                if (icon == ExplorerIcon.CopyHeaders) Add("M5.5,4.5 H13.5 V7.5 H5.5 Z", Accent, SteelDark);
+                break;
+
+            case ExplorerIcon.SelectAll:
+                // Esquinas de una selección alrededor de un bloque.
+                Add("M4.5,4.5 H11.5 V11.5 H4.5 Z", AccentLight, null);
+                Add("M2,5 V2 H5 M11,2 H14 V5 M14,11 V14 H11 M5,14 H2 V11", null, Accent, 1.6);
+                break;
+
+            case ExplorerIcon.SortAscending:
+                Add("M4.5,13 V3 M2,5.5 L4.5,3 L7,5.5", null, Accent, 1.7);
+                Add("M9,4 H11 M9,8 H13 M9,12 H15", null, SteelDark, 1.7);
+                break;
+
+            case ExplorerIcon.SortDescending:
+                Add("M4.5,3 V13 M2,10.5 L4.5,13 L7,10.5", null, Accent, 1.7);
+                Add("M9,4 H15 M9,8 H13 M9,12 H11", null, SteelDark, 1.7);
+                break;
+
+            case ExplorerIcon.ClearSort:
+                Add("M2,4 H9 M2,8 H9 M2,12 H9", null, SteelDark, 1.7);
+                Add("M11,6 L15,10 M15,6 L11,10", null, Red, 1.7);
                 break;
 
             case ExplorerIcon.KeyColumn:

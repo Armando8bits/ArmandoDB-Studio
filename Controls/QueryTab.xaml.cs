@@ -1264,6 +1264,7 @@ public partial class QueryTab : UserControl
         menu.Items.Add(new Separator());
         menu.Items.Add(MenuItem("Filtrar resultados (Ctrl+Mayús+L)", ToggleResultFilter));
         menu.Items.Add(MenuItem("Guardar resultados como...", () => ExportAsync(result, grid).Watch("Exportar resultados")));
+        MenuIcons.Apply(menu);
         grid.ContextMenu = menu;
 
         grid.ItemsSource = result.Rows;
@@ -1403,6 +1404,7 @@ public partial class QueryTab : UserControl
         Add("Quitar el orden", column => SortBy(grid, column, null));
         menu.Items.Add(new Separator());
         Add("Seleccionar la columna", column => SelectColumnRange(grid, column.DisplayIndex, 1, add: false));
+        MenuIcons.Apply(menu);
         return menu;
     }
 
