@@ -12,9 +12,13 @@
                 <Separator/>
                 <MenuItem Header="_Nueva consulta" InputGestureText="Ctrl+N" Click="NewQuery_Click"/>
                 <MenuItem Header="_Abrir..." InputGestureText="Ctrl+O" Click="Open_Click"/>
+                <!-- Los archivos se añaden en código (UpdateRecentMenu). -->
+                <MenuItem x:Name="RecentMenuItem" Header="Abrir _reciente"/>
                 <MenuItem Header="_Guardar" InputGestureText="Ctrl+S" Click="Save_Click"/>
                 <MenuItem Header="Guardar c_omo..." Click="SaveAs_Click"/>
+                <MenuItem x:Name="SaveAllMenuItem" Header="Guardar _todo" InputGestureText="Ctrl+Mayús+S" Click="SaveAll_Click"/>
                 <MenuItem Header="C_errar pestaña" InputGestureText="Ctrl+W" Click="CloseTab_Click"/>
+                <MenuItem x:Name="CloseAllMenuItem" Header="Cerrar _todas (excepto ancladas)" Click="CloseAll_Click"/>
                 <Separator/>
                 <MenuItem Header="_Salir" Click="Exit_Click"/>
             </MenuItem>
@@ -93,6 +97,10 @@
                         ToolTip="Desconectar la conexión seleccionada en el explorador (o la de la pestaña actual)"/>
                 <!-- Contenido (icono, y texto si lo lleva) puesto en código, con los mismos iconos que sus menús. -->
                 <Button x:Name="NewQueryButton" Click="NewQuery_Click" Padding="6,2" ToolTip="Nueva consulta (Ctrl+N)"/>
+                <Button x:Name="SaveButton" Click="Save_Click" Padding="6,3" IsEnabled="False"
+                        ToolTip="Guardar (Ctrl+S)" ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="SaveAllButton" Click="SaveAll_Click" Padding="6,3" IsEnabled="False"
+                        ToolTip="Guardar todas las consultas con cambios (Ctrl+Mayús+S)" ToolTipService.ShowOnDisabled="True"/>
                 <Separator/>
                 <Button x:Name="UndoButton" Click="Undo_Click" Padding="6,3" IsEnabled="False"
                         ToolTip="Deshacer (Ctrl+Z)" ToolTipService.ShowOnDisabled="True"/>

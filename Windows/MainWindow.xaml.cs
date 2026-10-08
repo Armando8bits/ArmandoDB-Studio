@@ -106,6 +106,9 @@ public partial class MainWindow : Window
         ExplainButton.Content = ExplorerIcons.Header(ExplorerIcon.Plan, "Plan");
         CancelButton.Content = ExplorerIcons.Header(ExplorerIcon.Cancel, "Cancelar");
         NewQueryButton.Content = ExplorerIcons.Header(ExplorerIcon.NewQuery, "Nueva consulta");
+        UpdateRecentMenu();
+        SaveButton.Content = ExplorerIcons.Create(ExplorerIcon.Save);
+        SaveAllButton.Content = ExplorerIcons.Create(ExplorerIcon.SaveAll);
         UndoButton.Content = ExplorerIcons.Create(ExplorerIcon.Undo);
         RedoButton.Content = ExplorerIcons.Create(ExplorerIcon.Redo);
         ExecuteMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.Execute);
@@ -213,6 +216,7 @@ public partial class MainWindow : Window
         var recovered = RecoveryStore.CollectFromCrashes();
         RecoveryStore.Start(() => _tabs
             .Where(t => t.Tab.IsDirty && t.Tab.SqlEditor.Text.Trim().Length > 0)
+            .DistinctBy(t => t.Tab.Script)   // un script con varias vistas se guarda una vez
             .Select(t => new UnsavedQuery(t.Tab.Title, t.Tab.Profile.Name, t.Tab.FilePath, t.Tab.SqlEditor.Text)).ToList());
         _recoveryTimer.Tick += (_, _) => RecoveryStore.SaveIfChanged();
         _recoveryTimer.Start();
@@ -245,7 +249,7 @@ public partial class MainWindow : Window
         else if (modifiers == ModifierKeys.Control && e.Key == Key.L)
         {
             e.Handled = true;
-            if (Current != null) await Current.ExplainAsync();
+            await ExplainCurrentAsync();
         }
         else if (modifiers == ModifierKeys.Control && e.Key == Key.B)
         {
@@ -287,6 +291,11 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             if (Current != null) Save(Current, saveAs: false);
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.S)
+        {
+            e.Handled = true;
+            SaveAll();
         }
         else if (modifiers == ModifierKeys.Alt && (e.Key == Key.System ? e.SystemKey : e.Key) is Key.Left or Key.Right or Key.Up or Key.Down
                  && Keyboard.FocusedElement is not (ComboBox or ComboBoxItem))   // en un desplegable, Alt+↓ lo abre
@@ -344,6 +353,17 @@ public partial class MainWindow : Window
     private void Open_Click(object sender, RoutedEventArgs e) => OpenFile();
     private void Save_Click(object sender, RoutedEventArgs e) { if (Current != null) Save(Current, saveAs: false); }
     private void SaveAs_Click(object sender, RoutedEventArgs e) { if (Current != null) Save(Current, saveAs: true); }
+    private void SaveAll_Click(object sender, RoutedEventArgs e) => SaveAll();
+
+    /// <summary>
+    /// Cierra todas las pestañas de todas las ventanas, menos las ancladas. Se detiene si en alguna se cancela
+    /// el "¿guardar los cambios?".
+    /// </summary>
+    private void CloseAll_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var entry in _tabs.Where(t => !t.Pinned).ToList())
+            if (!CloseTab(entry)) break;
+    }
     private void CloseTab_Click(object sender, RoutedEventArgs e) { if (ActiveEntry != null) CloseTab(ActiveEntry); }
     private void MinimizeResults_Click(object sender, RoutedEventArgs e) => Current?.ToggleMinimizeResults();
     private void MaximizeResults_Click(object sender, RoutedEventArgs e) => Current?.ToggleMaximizeResults();
@@ -351,10 +371,7 @@ public partial class MainWindow : Window
     private async void Execute_Click(object sender, RoutedEventArgs e) => await ExecuteCurrentAsync();
     private void Cancel_Click(object sender, RoutedEventArgs e) => Current?.Cancel();
 
-    private async void Explain_Click(object sender, RoutedEventArgs e)
-    {
-        if (Current != null) await Current.ExplainAsync();
-    }
+    private async void Explain_Click(object sender, RoutedEventArgs e) => await ExplainCurrentAsync();
     private void Find_Click(object sender, RoutedEventArgs e) => Current?.OpenSearch();
     private void Replace_Click(object sender, RoutedEventArgs e) => OpenReplace();
 
@@ -421,8 +438,37 @@ public partial class MainWindow : Window
 
     private async Task ExecuteCurrentAsync()
     {
-        if (Current != null)
-            await Current.ExecuteAsync();
+        if (Current is { } tab && await EnsureTabConnectedAsync(tab, "ejecutar la consulta"))
+            await tab.ExecuteAsync();
+    }
+
+    private async Task ExplainCurrentAsync()
+    {
+        if (Current is { } tab && await EnsureTabConnectedAsync(tab, "obtener el plan de ejecución"))
+            await tab.ExplainAsync();
+    }
+
+    /// <summary>
+    /// Una pestaña abierta sin conexión la pide en el momento de necesitarla (ejecutar, plan). Si se cancela,
+    /// la pestaña lo deja escrito como error y devuelve false.
+    /// </summary>
+    private async Task<bool> EnsureTabConnectedAsync(QueryTab tab, string action)
+    {
+        if (!tab.IsOffline) return true;
+        if (tab.IsRunning) return false;
+
+        var target = await ConnectCoreAsync(emptyTab: false);
+        if (target == null)
+        {
+            tab.ReportNotConnected(action);
+            return false;
+        }
+        // Al conectar se restaura la sesión de esa conexión: si este archivo estaba en ella, ya quedó conectado.
+        if (tab.IsOffline) await tab.ChangeConnectionAsync(target.Value.Profile, target.Value.Database);
+        SaveSessions();
+        // La sesión restaurada pudo dejar a la vista otra pestaña: se vuelve a la que pidió la conexión.
+        if (_tabs.FirstOrDefault(t => t.Tab == tab) is { } entry) Select(entry);
+        return !tab.IsOffline;
     }
 
     /// <summary>Una base de datos de una conexión abierta, como se muestra en el desplegable: "base (conexión)".</summary>
@@ -454,6 +500,7 @@ public partial class MainWindow : Window
             "Ctrl+L\t\t\tPlan de ejecución\n" +
             "Alt+Pausa\t\tCancelar la ejecución\n\n" +
             "Ctrl+N / Ctrl+O / Ctrl+S\tNueva consulta / Abrir / Guardar\n" +
+            "Ctrl+Mayús+S\t\tGuardar todas las consultas con cambios\n" +
             "Ctrl+W\t\t\tCerrar la pestaña\n" +
             "Ctrl+Tab\t\tPestaña siguiente (con Mayús, anterior)\n\n" +
             "Ctrl+Z / Ctrl+Y\t\tDeshacer / Rehacer\n" +
@@ -472,10 +519,26 @@ public partial class MainWindow : Window
 
     // ---------- Conexión ----------
 
-    private async Task ConnectAsync()
+    /// <summary>
+    /// Conectar desde el menú o la barra. Si la pestaña actual está sin conexión, conectar es conectarla a ella
+    /// (no se abre además una consulta vacía).
+    /// </summary>
+    /// <param name="emptyTab">Abrir una consulta vacía al conectar; false si a continuación se va a abrir un archivo.</param>
+    private async Task ConnectAsync(bool emptyTab = true)
+    {
+        var offline = Current is { IsOffline: true, IsRunning: false } tab ? tab : null;
+        var target = await ConnectCoreAsync(emptyTab && offline == null);
+        if (target == null || offline == null) return;
+        if (offline.IsOffline) await offline.ChangeConnectionAsync(target.Value.Profile, target.Value.Database);
+        SaveSessions();
+        if (_tabs.FirstOrDefault(t => t.Tab == offline) is { } entry) Select(entry);
+    }
+
+    /// <summary>Muestra el diálogo de conexión y abre la elegida. Devuelve null si se canceló.</summary>
+    private async Task<(ConnectionProfile Profile, string? Database)?> ConnectCoreAsync(bool emptyTab)
     {
         var dialog = new ConnectionDialog { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.Profile == null) return;
+        if (dialog.ShowDialog() != true || dialog.Profile == null) return null;
 
         // Si ya hay una conexión con el mismo nombre, se reutiliza su nodo.
         var profile = _databases.Keys.FirstOrDefault(p => p.Name == dialog.Profile.Name);
@@ -489,7 +552,7 @@ public partial class MainWindow : Window
             await LoadChildrenAsync(root, (Node)root.Tag);
             root.IsExpanded = true;
 
-            if (RestoreSession(profile, dialog.Profile.Database)) return;
+            if (RestoreSession(profile, dialog.Profile.Database)) return (profile, dialog.Profile.Database);
         }
         else
         {
@@ -504,7 +567,8 @@ public partial class MainWindow : Window
             }
         }
 
-        AddTab(profile, dialog.Profile.Database);
+        if (emptyTab) AddTab(profile, dialog.Profile.Database);
+        return (profile, dialog.Profile.Database);
     }
 
     /// <summary>Encabezado del nodo de una conexión; las de producción, en rojo y rotuladas.</summary>
@@ -602,6 +666,16 @@ public partial class MainWindow : Window
             foreach (var saved in SessionStore.Load(profile.Name))
             {
                 if (!File.Exists(saved.Path)) continue;
+                // Ya está abierto (p. ej. se abrió sin conexión y ahora se conecta): no se abre otra vez.
+                // Las pestañas que lo tenían sin conexión pasan a esta.
+                var open = _tabs.Where(t => string.Equals(t.Tab.FilePath, saved.Path, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (open.Count > 0)
+                {
+                    foreach (var entry in open.Where(t => t.Tab.IsOffline))
+                        entry.Tab.ChangeConnectionAsync(profile, saved.Database ?? defaultDatabase).Watch("Conectar la pestaña");
+                    restored = true;
+                    continue;
+                }
                 try
                 {
                     // Cada archivo vuelve al grupo de la vista dividida en el que estaba.
@@ -654,6 +728,7 @@ public partial class MainWindow : Window
             profile => profile.Name,
             profile => AllGroups.SelectMany(VisualOrder)
                 .Where(t => t.Tab.Profile == profile && t.Tab.FilePath != null)
+                .DistinctBy(t => t.Tab.Script)   // las vistas duplicadas no se restauran: una pestaña por archivo
                 .Select(t => new SessionTab
                 {
                     Path = t.Tab.FilePath!,
@@ -670,11 +745,14 @@ public partial class MainWindow : Window
 
     private void NewQueryFromCurrent()
     {
-        var current = Current;
+        // Una pestaña sin conexión no sirve de referencia para la nueva.
+        var current = Current is { IsOffline: false } connected ? connected : null;
         if (current != null)
             AddTab(current.Profile, current.CurrentDatabase);
         else if (_databases.Count > 0)
             AddTab(_databases.Keys.First(), null);
+        else if (Current != null)
+            ConnectCoreAsync(emptyTab: true).Watch("Conectar");   // consulta nueva, sin tocar la pestaña sin conexión
         else
             ConnectAsync().Watch("Conectar");
     }
@@ -692,9 +770,11 @@ public partial class MainWindow : Window
         ToolTip = toolTip,
     };
 
-    private QueryTab AddTab(ConnectionProfile profile, string? database)
+    /// <param name="script">Script ya abierto del que la pestaña será otra vista; null para una consulta nueva.</param>
+    private QueryTab AddTab(ConnectionProfile profile, string? database, ScriptFile? script = null)
     {
-        var tab = new QueryTab(profile, database, $"Consulta{++_queryCounter}.sql");
+        var tab = script != null ? new QueryTab(profile, database, script)
+            : new QueryTab(profile, database, $"Consulta{++_queryCounter}.sql");
         tab.StateChanged += Tab_StateChanged;
 
         var title = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
@@ -811,6 +891,8 @@ public partial class MainWindow : Window
         ((MenuItem)menu.Items[^1]).InputGestureText = "Ctrl+W";
         AddMenu("Cerrar las demás (excepto ancladas)", () => CloseMany(t => t != entry));
         var closeOthers = (MenuItem)menu.Items[^1];
+        AddMenu("Cerrar todas (excepto ancladas)", () => CloseMany(_ => true));
+        var closeAll = (MenuItem)menu.Items[^1];
         AddMenu("Cerrar las de la derecha", () => { var right = ToTheRight(); CloseMany(right.Contains); });
         var closeRight = (MenuItem)menu.Items[^1];
         AddMenu("Cerrar las que no tienen cambios", () => CloseMany(Unmodified));
@@ -827,6 +909,12 @@ public partial class MainWindow : Window
         AddMenu("Dividir: arriba / abajo", () => { Select(entry); Split(sideBySide: false); });
         var splitStackItem = (MenuItem)menu.Items[^1];
         splitStackItem.InputGestureText = "Alt+↑ / Alt+↓";
+        AddMenu("Duplicar vista a la derecha", () => DuplicateView(entry, sideBySide: true));
+        ((MenuItem)menu.Items[^1]).ToolTip = "Abre el mismo script en otra pestaña al lado: lo que se escribe en una aparece en la otra";
+        AddMenu("Duplicar vista abajo", () => DuplicateView(entry, sideBySide: false));
+        ((MenuItem)menu.Items[^1]).ToolTip = "Abre el mismo script en otra pestaña debajo: lo que se escribe en una aparece en la otra";
+        AddMenu("Duplicar vista en una ventana nueva", () => DuplicateViewToWindow(entry));
+        ((MenuItem)menu.Items[^1]).ToolTip = "Abre el mismo script en otra ventana (para otro monitor): lo que se escribe en una aparece en la otra";
         AddMenu("Mover al otro grupo", () => { Select(entry); MoveActiveToOtherGroup(); });
         AddMenu("Quitar la división", () => { Select(entry); Unsplit(); });
         menu.Items.Add(new Separator());
@@ -848,6 +936,7 @@ public partial class MainWindow : Window
             var closable = VisualOrder(entry.Group).Where(t => !t.Pinned).ToList();
             var right = ToTheRight();
             closeOthers.IsEnabled = closable.Any(t => t != entry);
+            closeAll.IsEnabled = closable.Count > 0;
             closeRight.IsEnabled = closable.Any(right.Contains);
             closeUnmodified.IsEnabled = closable.Any(Unmodified);
             closeUnmodifiedRight.IsEnabled = closable.Any(t => right.Contains(t) && Unmodified(t));
@@ -918,6 +1007,7 @@ public partial class MainWindow : Window
         _tabs.Add(entry);
         StyleHeader(entry);
         RebuildStrips(animate: true);
+        CloseAllMenuItem.IsEnabled = _tabs.Any(t => !t.Pinned);
         SaveSessions();
     }
 
@@ -1181,6 +1271,53 @@ public partial class MainWindow : Window
         UpdateGroupMenu();
     }
 
+    /// <summary>
+    /// Abre otra vista del mismo script en el otro grupo de su zona (dividiéndola si hace falta), para ver dos
+    /// partes del script a la vez. Comparten texto, archivo y deshacer; cada una tiene su cursor, sus resultados
+    /// y su conexión. La vista nueva es una pestaña más: se puede mover de grupo o a otra ventana.
+    /// </summary>
+    private void DuplicateView(TabEntry source, bool sideBySide)
+    {
+        Select(source);
+        var area = source.Group.Area;
+        area.SideBySide = sideBySide;
+        if (area == _main)
+        {
+            AppSettings.Current.SplitSideBySide = sideBySide;
+            try { AppSettings.Current.Save(); } catch { }
+        }
+        if (area.Groups.Count < 2) CreateGroup(area);
+
+        // La pestaña nueva nace en el grupo activo: el otro de la zona.
+        _activeGroup = area.Groups.First(g => g != source.Group);
+        var tab = AddTab(source.Tab.Profile, source.Tab.CurrentDatabase, source.Tab.Script);
+        var copy = _tabs.First(t => t.Tab == tab);
+        tab.ShowSamePlaceAs(source.Tab);
+
+        LayoutGroups(area);
+        RefreshTabs();
+        UpdateHeader(source);   // ahora lleva ":1" para distinguirse de la vista nueva
+        SaveSessions();
+        Select(copy);
+        UpdateFloatingWindows();
+        UpdateGroupMenu();
+    }
+
+    /// <summary>Abre otra vista del mismo script directamente en una ventana propia, sin dividir la zona actual.</summary>
+    private void DuplicateViewToWindow(TabEntry source)
+    {
+        Select(source);
+        _activeGroup = source.Group;
+        var tab = AddTab(source.Tab.Profile, source.Tab.CurrentDatabase, source.Tab.Script);
+        var copy = _tabs.First(t => t.Tab == tab);
+        tab.ShowSamePlaceAs(source.Tab);
+        FloatTab(copy);
+        // Al irse la copia, el grupo de origen vuelve a mostrar la pestaña original.
+        source.Group.Selected = source;
+        RefreshTabs();
+        UpdateHeader(source);   // ahora lleva ":1" para distinguirse de la vista nueva
+    }
+
     private void SplitCore(bool sideBySide)
     {
         var area = _activeGroup.Area;
@@ -1299,7 +1436,7 @@ public partial class MainWindow : Window
         AddButton(ExplorerIcon.Cancel, "Cancelar", "Cancelar la ejecución (Alt+Pausa)", () => Current?.Cancel());
         area.CancelButton = (Button)bar.Children[^1];
         area.CancelButton.IsEnabled = false;
-        AddButton(ExplorerIcon.Plan, "Plan", "Plan de ejecución (Ctrl+L)", () => Current?.ExplainAsync().Watch("Plan de ejecución"));
+        AddButton(ExplorerIcon.Plan, "Plan", "Plan de ejecución (Ctrl+L)", () => ExplainCurrentAsync().Watch("Plan de ejecución"));
         area.PlanButton = (Button)bar.Children[^1];
         AddButton(ExplorerIcon.SplitSide, "Izquierda / derecha", "Dividir esta ventana en columnas: la pestaña actual va a la derecha (con Alt+← o Alt+→ eliges el lado)", () => Split(sideBySide: true));
         area.SplitSideButton = (Button)bar.Children[^1];
@@ -1387,7 +1524,8 @@ public partial class MainWindow : Window
     private bool CloseTab(TabEntry entry)
     {
         var tab = entry.Tab;
-        if (tab.IsDirty && tab.HasText)
+        // Si quedan otras vistas del mismo script, cerrar esta no pierde nada: no se pregunta.
+        if (tab.IsDirty && tab.HasText && tab.IsLastView)
         {
             Select(entry);
             var answer = MessageBox.Show(this, $"¿Guardar los cambios de {tab.Title}?", App.Name,
@@ -1468,13 +1606,14 @@ public partial class MainWindow : Window
     /// el nombre de la conexión; en MySQL, la base, y la conexión si hay más de una abierta.
     /// </summary>
     private string TargetLabel(QueryTab tab) =>
-        tab.Profile.Kind == DbKind.Sqlite ? tab.Profile.Name
+        tab.IsOffline ? "sin conexión"
+        : tab.Profile.Kind == DbKind.Sqlite ? tab.Profile.Name
         : (tab.CurrentDatabase ?? "(sin base)") + (_databases.Count > 1 ? $" ({tab.Profile.Name})" : "");
 
     private void UpdateHeader(TabEntry entry)
     {
         var tab = entry.Tab;
-        entry.Title.Text = $"{tab.Title}{(tab.IsDirty ? "*" : "")} - {TargetLabel(tab)}"
+        entry.Title.Text = $"{tab.Title}{tab.ViewSuffix}{(tab.IsDirty ? "*" : "")} - {TargetLabel(tab)}"
             + (tab.IsRunning ? " (ejecutando...)" : "");
         entry.Header.ToolTip = $"{tab.FilePath ?? tab.Title}\n{tab.Profile.Name}";
     }
@@ -1518,6 +1657,12 @@ public partial class MainWindow : Window
         // En la barra, el tema apenas distingue un botón deshabilitado: se atenúa a propósito.
         UndoButton.Opacity = UndoButton.IsEnabled ? 1 : 0.35;
         RedoButton.Opacity = RedoButton.IsEnabled ? 1 : 0.35;
+        // Guardar: la pestaña actual, si tiene cambios; Guardar todo: si alguna los tiene.
+        SaveButton.IsEnabled = tab is { IsDirty: true };
+        SaveAllButton.IsEnabled = SaveAllMenuItem.IsEnabled = _tabs.Any(NeedsSaving);
+        CloseAllMenuItem.IsEnabled = _tabs.Any(t => !t.Pinned);
+        SaveButton.Opacity = SaveButton.IsEnabled ? 1 : 0.35;
+        SaveAllButton.Opacity = SaveAllButton.IsEnabled ? 1 : 0.35;
         DockMenuItem.IsEnabled = ActiveEntry is { } active && active.Group.Area != _main;
         UpdateFloatingWindows();
     }
@@ -1531,20 +1676,35 @@ public partial class MainWindow : Window
 
     // ---------- Archivos ----------
 
-    private void OpenFile()
-    {
-        if (_databases.Count == 0)
-        {
-            MessageBox.Show(this, "Conéctate primero a un servidor.", App.Name, MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
+    private void OpenFile() => OpenFileAsync().Watch("Abrir archivo");
 
+    private async Task OpenFileAsync()
+    {
         var dialog = new OpenFileDialog { Filter = FileFilter, Multiselect = true };
         if (dialog.ShowDialog(this) != true) return;
+        await OfferConnectionAsync();
+        OpenFiles(dialog.FileNames);
+    }
 
-        var current = Current;
-        var profile = current?.Profile ?? _databases.Keys.First();
-        foreach (string path in dialog.FileNames)
+    /// <summary>
+    /// Al abrir un archivo sin ninguna conexión se ofrece conectar, como en SSMS. Si se cancela, el archivo se
+    /// abre igualmente, sin conexión: se pedirá otra vez al ejecutar.
+    /// </summary>
+    private async Task OfferConnectionAsync()
+    {
+        if (_databases.Count == 0) await ConnectCoreAsync(emptyTab: false);
+    }
+
+    /// <summary>
+    /// Abre cada archivo en una pestaña de la conexión actual (o sin conexión, si no hay ninguna) y lo anota
+    /// en "Abrir reciente".
+    /// </summary>
+    private void OpenFiles(IEnumerable<string> paths)
+    {
+        // Una pestaña sin conexión no sirve de referencia: se usa la primera conexión abierta, si la hay.
+        var current = Current is { IsOffline: false } connected ? connected : null;
+        var profile = current?.Profile ?? _databases.Keys.FirstOrDefault() ?? ConnectionProfile.Offline;
+        foreach (string path in paths)
         {
             // Si ya está abierto, se va a su pestaña: dos pestañas del mismo archivo se pisarían al guardar.
             if (_tabs.FirstOrDefault(t => string.Equals(t.Tab.FilePath, path, StringComparison.OrdinalIgnoreCase)) is { } open)
@@ -1555,13 +1715,69 @@ public partial class MainWindow : Window
             try
             {
                 AddTab(profile, current?.CurrentDatabase).LoadFile(path);
+                RememberRecent(path);
             }
             catch (Exception ex)
             {
+                // La pestaña que se creó para el archivo no debe quedar vacía de recuerdo.
+                if (_tabs.Count > 0 && _tabs[^1].Tab is { FilePath: null, HasText: false }) CloseTab(_tabs[^1]);
                 Errors.Show(this, "No se pudo abrir el archivo", ex);
             }
         }
         SaveSessions();
+    }
+
+    // ---------- Abrir reciente ----------
+
+    private void RememberRecent(string path)
+    {
+        AppSettings.Current.AddRecentFile(path);
+        try { AppSettings.Current.Save(); } catch { }
+        UpdateRecentMenu();
+    }
+
+    /// <summary>Rellena el submenú "Abrir reciente" con la lista guardada.</summary>
+    private void UpdateRecentMenu()
+    {
+        var recent = AppSettings.Current.RecentFiles;
+        RecentMenuItem.Items.Clear();
+        RecentMenuItem.IsEnabled = recent.Count > 0;
+        for (int i = 0; i < recent.Count; i++)
+        {
+            string path = recent[i];
+            // "__": en un menú, un solo "_" marcaría la letra siguiente como tecla de acceso.
+            string label = $"{Path.GetFileName(path)}   ({Path.GetDirectoryName(path)})".Replace("_", "__");
+            var item = new MenuItem { Header = i < 9 ? $"_{i + 1}  {label}" : $"{i + 1}  {label}", ToolTip = path };
+            item.Click += (_, _) => OpenRecentAsync(path).Watch("Abrir archivo reciente");
+            RecentMenuItem.Items.Add(item);
+        }
+        if (recent.Count == 0) return;
+
+        RecentMenuItem.Items.Add(new Separator());
+        var clear = new MenuItem { Header = "_Borrar la lista" };
+        clear.Click += (_, _) =>
+        {
+            AppSettings.Current.RecentFiles.Clear();
+            try { AppSettings.Current.Save(); } catch { }
+            UpdateRecentMenu();
+        };
+        RecentMenuItem.Items.Add(clear);
+    }
+
+    private async Task OpenRecentAsync(string path)
+    {
+        if (!File.Exists(path))
+        {
+            MessageBox.Show(this, $"El archivo ya no existe y se quita de la lista:\n{path}", App.Name, MessageBoxButton.OK, MessageBoxImage.Information);
+            AppSettings.Current.RemoveRecentFile(path);
+            try { AppSettings.Current.Save(); } catch { }
+            UpdateRecentMenu();
+            return;
+        }
+        await OfferConnectionAsync();
+        OpenFiles(new[] { path });
+        // Si ya estaba abierto solo se fue a su pestaña: igualmente pasa a ser el más reciente.
+        RememberRecent(path);
     }
 
     private bool Save(QueryTab tab, bool saveAs)
@@ -1578,6 +1794,7 @@ public partial class MainWindow : Window
         {
             tab.SaveFile(path);
             SaveSessions();
+            RememberRecent(path);
             return true;
         }
         catch (Exception ex)
@@ -1585,6 +1802,26 @@ public partial class MainWindow : Window
             Errors.Show(this, "No se pudo guardar el archivo", ex);
             return false;
         }
+    }
+
+    /// <summary>Con cambios sin guardar y algo escrito (una consulta nueva vacía no cuenta).</summary>
+    private static bool NeedsSaving(TabEntry entry) => entry.Tab.IsDirty && entry.Tab.HasText;
+
+    /// <summary>
+    /// Guarda todas las consultas con cambios, también las de las ventanas flotantes. Las que aún no tienen
+    /// archivo preguntan dónde guardarse; cancelar esa pregunta detiene el resto.
+    /// </summary>
+    private void SaveAll()
+    {
+        var active = ActiveEntry;
+        foreach (var entry in _tabs.Where(NeedsSaving).ToList())
+        {
+            if (!NeedsSaving(entry)) continue;   // otra vista del mismo script ya lo guardó
+            // Se muestra la pestaña antes de preguntar dónde guardarla, para saber cuál es.
+            if (entry.Tab.FilePath == null) Select(entry);
+            if (!Save(entry.Tab, saveAs: false)) break;
+        }
+        if (active != null && _tabs.Contains(active) && ActiveEntry != active) Select(active);
     }
 
     // ---------- Explorador de objetos ----------

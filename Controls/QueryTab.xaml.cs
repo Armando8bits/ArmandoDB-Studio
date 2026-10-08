@@ -32,6 +32,33 @@ public class ResultSet
     public string? SourceTable { get; set; }
 }
 
+/// <summary>
+/// Un script abierto: su texto, su archivo y si tiene cambios. Lo comparten todas las pestañas que son vistas
+/// del mismo script ("Duplicar vista"): lo que se escribe o se guarda en una vale para todas.
+/// </summary>
+public sealed class ScriptFile
+{
+    public ICSharpCode.AvalonEdit.Document.TextDocument Document { get; } = new();
+    public required string DefaultTitle { get; init; }
+    public string? FilePath { get; set; }
+    public bool IsDirty { get; private set; }
+    /// <summary>Codificación con la que se leyó el archivo: se guarda con la misma, para no cambiársela a quien lo comparte.</summary>
+    public Encoding Encoding { get; set; } = new UTF8Encoding(false);
+    /// <summary>Pestañas abiertas sobre este script.</summary>
+    public List<QueryTab> Views { get; } = new();
+
+    /// <summary>Cambió el archivo, el estado de "con cambios" o el número de vistas.</summary>
+    public event Action? Changed;
+
+    public void SetDirty(bool dirty)
+    {
+        IsDirty = dirty;
+        Changed?.Invoke();
+    }
+
+    public void NotifyChanged() => Changed?.Invoke();
+}
+
 public partial class QueryTab : UserControl
 {
     /// <summary>Tope de filas por conjunto de resultados, para no agotar la memoria.</summary>
@@ -42,15 +69,17 @@ public partial class QueryTab : UserControl
     /// <summary>A partir de estas filas, guardar a archivo muestra una barra de progreso.</summary>
     private const int ExportProgressThreshold = 5000;
 
-    private readonly string _defaultTitle;
+    private readonly int _viewNumber;
     private readonly List<DataGrid> _grids = new();
     private DbConnection? _conn;
     private CancellationTokenSource? _cts;
 
     public ConnectionProfile Profile { get; private set; }
     public string? CurrentDatabase { get; private set; }
-    public string? FilePath { get; private set; }
-    public bool IsDirty { get; private set; }
+    /// <summary>El script que muestra; compartido con las demás vistas del mismo script.</summary>
+    public ScriptFile Script { get; }
+    public string? FilePath => Script.FilePath;
+    public bool IsDirty => Script.IsDirty;
     public bool IsRunning { get; private set; }
     public string StatusText { get; private set; } = "Listo";
     public string RowsText { get; private set; } = "";
@@ -58,8 +87,12 @@ public partial class QueryTab : UserControl
     public int? RowCount { get; private set; }
     public string TimeText { get; private set; } = "";
 
-    public string Title => FilePath != null ? Path.GetFileName(FilePath) : _defaultTitle;
+    public string Title => FilePath != null ? Path.GetFileName(FilePath) : Script.DefaultTitle;
     public bool HasText => !string.IsNullOrWhiteSpace(Editor.Text);
+    /// <summary>Es la única pestaña abierta sobre su script: cerrarla es cerrar el script.</summary>
+    public bool IsLastView => Script.Views.Count <= 1;
+    /// <summary>":2", ":3"... para distinguir las vistas de un mismo script; vacío si solo hay una.</summary>
+    public string ViewSuffix => Script.Views.Count > 1 ? $":{_viewNumber}" : "";
 
     /// <summary>Cambió algo que la ventana principal muestra (título, estado, base de datos).</summary>
     public event Action<QueryTab>? StateChanged;
@@ -96,11 +129,21 @@ public partial class QueryTab : UserControl
     }
 
     public QueryTab(ConnectionProfile profile, string? database, string defaultTitle)
+        : this(profile, database, new ScriptFile { DefaultTitle = defaultTitle })
+    {
+    }
+
+    /// <summary>Pestaña sobre un script que puede estar ya abierto en otra: comparten texto, archivo y deshacer.</summary>
+    public QueryTab(ConnectionProfile profile, string? database, ScriptFile script)
     {
         InitializeComponent();
         Profile = profile;
         CurrentDatabase = database;
-        _defaultTitle = defaultTitle;
+        Script = script;
+        Editor.Document = script.Document;
+        _viewNumber = script.Views.Count == 0 ? 1 : script.Views.Max(v => v._viewNumber) + 1;
+        script.Views.Add(this);
+        script.Changed += Script_Changed;
 
         UpdateResultsPaneButtons();
         // Al pasar a otra pestaña del panel (a mano o porque llegó un resultado), un panel minimizado se despliega.
@@ -165,15 +208,26 @@ public partial class QueryTab : UserControl
         };
         Editor.TextChanged += (_, _) =>
         {
-            if (IsDirty) return;
-            IsDirty = true;
-            StateChanged?.Invoke(this);
+            // Con varias vistas el aviso llega a todas; la primera marca el script y las demás ya lo ven marcado.
+            if (!IsDirty) Script.SetDirty(true);
         };
         // Para que los botones Deshacer/Rehacer se activen y desactiven según haya algo que deshacer o rehacer.
-        Editor.Document.UndoStack.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName is "CanUndo" or "CanRedo") StateChanged?.Invoke(this);
-        };
+        Script.Document.UndoStack.PropertyChanged += UndoStack_PropertyChanged;
+    }
+
+    private void Script_Changed() => StateChanged?.Invoke(this);
+
+    private void UndoStack_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is "CanUndo" or "CanRedo") StateChanged?.Invoke(this);
+    }
+
+    /// <summary>Coloca el cursor y el desplazamiento donde los tiene otra vista del mismo script.</summary>
+    public void ShowSamePlaceAs(QueryTab other)
+    {
+        Editor.CaretOffset = Math.Min(other.Editor.CaretOffset, Editor.Document.TextLength);
+        // El editor aún no se ha medido: se desplaza cuando ya tiene tamaño.
+        Dispatcher.BeginInvoke(() => Editor.ScrollToVerticalOffset(other.Editor.VerticalOffset), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     public void FocusEditor() => Editor.Focus();
@@ -401,30 +455,25 @@ public partial class QueryTab : UserControl
     {
         Editor.Text = text;
         Editor.Document.UndoStack.ClearAll();   // el texto inicial no es algo que se pueda "deshacer"
-        IsDirty = false;
-        StateChanged?.Invoke(this);
+        Script.SetDirty(false);   // avisa a todas las vistas del script, esta incluida
     }
-
-    /// <summary>Codificación con la que se leyó el archivo: se guarda con la misma, para no cambiársela a quien lo comparte.</summary>
-    private Encoding _fileEncoding = new UTF8Encoding(false);
 
     public void LoadFile(string path)
     {
-        Editor.Text = TextFiles.Read(path, out _fileEncoding);
+        Editor.Text = TextFiles.Read(path, out var encoding);
+        Script.Encoding = encoding;
         Editor.Document.UndoStack.ClearAll();
-        FilePath = path;
-        IsDirty = false;
-        StateChanged?.Invoke(this);
+        Script.FilePath = path;
+        Script.SetDirty(false);
     }
 
     public void SaveFile(string path)
     {
         // Si el texto ya no cabe en la codificación original (se añadió, p. ej., un emoji a un archivo ANSI), UTF-8.
-        if (!TextFiles.CanEncode(Editor.Text, _fileEncoding)) _fileEncoding = new UTF8Encoding(false);
-        File.WriteAllText(path, Editor.Text, _fileEncoding);
-        FilePath = path;
-        IsDirty = false;
-        StateChanged?.Invoke(this);
+        if (!TextFiles.CanEncode(Editor.Text, Script.Encoding)) Script.Encoding = new UTF8Encoding(false);
+        File.WriteAllText(path, Editor.Text, Script.Encoding);
+        Script.FilePath = path;
+        Script.SetDirty(false);
     }
 
     public void Cancel()
@@ -445,6 +494,13 @@ public partial class QueryTab : UserControl
 
     public void Close()
     {
+        // Deja de ser una vista de su script; las que queden actualizan su título (":2" deja de hacer falta).
+        if (Script.Views.Remove(this))
+        {
+            Script.Changed -= Script_Changed;
+            Script.Document.UndoStack.PropertyChanged -= UndoStack_PropertyChanged;
+            Script.NotifyChanged();
+        }
         Cancel();
         var conn = _conn;
         _conn = null;
@@ -469,6 +525,20 @@ public partial class QueryTab : UserControl
         CurrentDatabase = database;
         ApplyDialect();   // la otra conexión puede ser de otro motor
         StatusText = $"Pestaña cambiada a {profile.Name}.";
+        StateChanged?.Invoke(this);
+    }
+
+    /// <summary>La pestaña se abrió sin conexión: se edita y se guarda, pero para ejecutar hay que conectarla.</summary>
+    public bool IsOffline => Profile.IsOffline;
+
+    /// <summary>Deja constancia de que no se hizo lo pedido porque la pestaña sigue sin conexión.</summary>
+    public void ReportNotConnected(string action)
+    {
+        Messages.Text = $"Error: no se pudo {action} porque esta pestaña no tiene conexión.\n"
+            + "Conéctate a un servidor (Archivo > Conectar) o elige una base de datos en la lista de la barra de herramientas.";
+        ResultTabs.SelectedIndex = MessagesTab;
+        RevealResults();
+        StatusText = "Sin conexión.";
         StateChanged?.Invoke(this);
     }
 
@@ -602,7 +672,9 @@ public partial class QueryTab : UserControl
     /// <summary>Ejecuta la selección si la hay; si no, el contenido completo de la pestaña.</summary>
     public async Task ExecuteAsync()
     {
-        if (IsRunning || ScriptToRun(Messages, MessagesTab) is not { } script) return;
+        if (IsRunning) return;
+        if (IsOffline) { ReportNotConnected("ejecutar la consulta"); return; }
+        if (ScriptToRun(Messages, MessagesTab) is not { } script) return;
         var (statements, lineOffset) = script;
 
         var settings = AppSettings.Current;
@@ -715,6 +787,13 @@ public partial class QueryTab : UserControl
         StateChanged?.Invoke(this);
     }
 
+    /// <summary>Oculta la pestaña del plan y vuelve a los resultados.</summary>
+    private void ClosePlan_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResultTabs.SelectedIndex == PlanTab) ResultTabs.SelectedIndex = GridTab;
+        PlanTabItem.Visibility = Visibility.Collapsed;
+    }
+
     /// <summary>
     /// Muestra el plan de ejecución estimado de la selección o de todo el contenido, sin ejecutar las consultas.
     /// MySQL: EXPLAIN FORMAT=TREE (o el EXPLAIN clásico en MariaDB y MySQL anteriores a 8.0.16).
@@ -722,7 +801,11 @@ public partial class QueryTab : UserControl
     /// </summary>
     public async Task ExplainAsync()
     {
-        if (IsRunning || ScriptToRun(PlanView, PlanTab) is not { } script) return;
+        if (IsRunning) return;
+        if (IsOffline) { ReportNotConnected("obtener el plan de ejecución"); return; }
+        // La pestaña del plan solo existe a la vista desde que se pide el primero.
+        PlanTabItem.Visibility = Visibility.Visible;
+        if (ScriptToRun(PlanView, PlanTab) is not { } script) return;
         var (statements, lineOffset) = script;
 
         _cts = new CancellationTokenSource();

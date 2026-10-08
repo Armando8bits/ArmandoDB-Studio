@@ -11,7 +11,7 @@ public enum ExplorerIcon
     // Acciones de la barra y los menús (los mismos en la ventana principal y en las flotantes).
     Execute, Plan, Cancel, Diagram, SplitSide, SplitStack, Unsplit, Float, DockBack,
     // Resto de opciones de menú.
-    NewQuery, Open, Save, SaveAs, Close, Exit, Undo, Redo, Find, Replace, Format, Complete, Snippets, Filter, Panel, Pin,
+    NewQuery, Open, Save, SaveAs, SaveAll, Close, Exit, Undo, Redo, Find, Replace, Format, Complete, Snippets, Filter, Panel, Pin,
     Next, Previous, MoveGroup, Monitor, Font, Confirm, Theme, Keyboard, Log, About, Refresh, Backup, Restore, Import,
     Copy, CopyHeaders, SelectAll, SortAscending, SortDescending, ClearSort,
     // Panel de resultados: minimizado, maximizado y repartido con el editor.
@@ -230,6 +230,14 @@ public static class ExplorerIcons
                 Add("M5,2.5 H10.5 V6 H5 Z", Brushes.White, null);
                 Add("M4.5,9 H11.5 V13.5 H4.5 Z", BlueLight, null);
                 if (icon == ExplorerIcon.SaveAs) Add("M9.5,14.5 L15,9", null, Orange, 2.4);
+                break;
+
+            case ExplorerIcon.SaveAll:
+                // Dos disquetes, uno detrás de otro.
+                Add("M5.5,1.5 H12.5 L14.5,3.5 V10.5 H5.5 Z", BlueLight, SteelDark);
+                Add("M1.5,5.5 H9 L11,7.5 V14.5 H1.5 Z", Blue, SteelDark);
+                Add("M3.5,5.5 H8 V8 H3.5 Z", Brushes.White, null);
+                Add("M3.5,10.5 H9 V14.5 H3.5 Z", BlueLight, null);
                 break;
 
             case ExplorerIcon.Close:

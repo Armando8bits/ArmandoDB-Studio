@@ -34,6 +34,23 @@ public class AppSettings
     /// <summary>Plan de ejecución como diagrama (true) o como texto (false).</summary>
     public bool PlanAsDiagram { get; set; } = true;
 
+    /// <summary>Tope de la lista "Abrir reciente".</summary>
+    public const int MaxRecentFiles = 15;
+
+    /// <summary>Últimos archivos abiertos o guardados, el más reciente primero.</summary>
+    public List<string> RecentFiles { get; set; } = new();
+
+    /// <summary>Pone el archivo al principio de los recientes (sin repetirlo) y recorta la lista.</summary>
+    public void AddRecentFile(string path)
+    {
+        RemoveRecentFile(path);
+        RecentFiles.Insert(0, path);
+        if (RecentFiles.Count > MaxRecentFiles) RecentFiles.RemoveRange(MaxRecentFiles, RecentFiles.Count - MaxRecentFiles);
+    }
+
+    public void RemoveRecentFile(string path) =>
+        RecentFiles.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
+
     public static AppSettings Current { get; } = Load();
 
     private static AppSettings Load()

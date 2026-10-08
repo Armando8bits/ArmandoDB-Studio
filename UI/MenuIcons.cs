@@ -14,7 +14,8 @@ public static class MenuIcons
     {
         ("Conectar", ExplorerIcon.Connect), ("Desconectar", ExplorerIcon.Disconnect),
         ("Nueva consulta", ExplorerIcon.NewQuery), ("Abrir", ExplorerIcon.Open),
-        ("Guardar resultados", ExplorerIcon.Save), ("Guardar como", ExplorerIcon.SaveAs), ("Guardar", ExplorerIcon.Save),
+        ("Guardar resultados", ExplorerIcon.Save), ("Guardar como", ExplorerIcon.SaveAs),
+        ("Guardar todo", ExplorerIcon.SaveAll), ("Guardar", ExplorerIcon.Save),
         ("Cerrar las demás", ExplorerIcon.Close), ("Cerrar", ExplorerIcon.Close), ("Salir", ExplorerIcon.Exit),
         ("Deshacer", ExplorerIcon.Undo), ("Rehacer", ExplorerIcon.Redo),
         ("Buscar", ExplorerIcon.Find), ("Reemplazar", ExplorerIcon.Replace),
@@ -25,6 +26,8 @@ public static class MenuIcons
         ("Minimizar", ExplorerIcon.PaneMinimize), ("Maximizar", ExplorerIcon.PaneMaximize),
         ("Anclar", ExplorerIcon.Pin), ("Desanclar", ExplorerIcon.Pin),
         ("Pestaña siguiente", ExplorerIcon.Next), ("Pestaña anterior", ExplorerIcon.Previous),
+        ("Duplicar vista a la derecha", ExplorerIcon.SplitSide), ("Duplicar vista abajo", ExplorerIcon.SplitStack),
+        ("Duplicar vista en una ventana", ExplorerIcon.Float),
         ("Dividir: izquierda", ExplorerIcon.SplitSide), ("Dividir: arriba", ExplorerIcon.SplitStack),
         ("Mover pestaña al otro grupo", ExplorerIcon.MoveGroup), ("Mover al otro grupo", ExplorerIcon.MoveGroup),
         ("Quitar la división", ExplorerIcon.Unsplit),

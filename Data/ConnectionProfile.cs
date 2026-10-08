@@ -83,6 +83,14 @@ public class ConnectionProfile
 
     public override string ToString() => Name;
 
+    /// <summary>
+    /// Marca de "sin conexión": la llevan las pestañas de archivos abiertos sin conectarse a ningún servidor.
+    /// Se puede editar y guardar; la conexión se pide al ejecutar.
+    /// </summary>
+    public static ConnectionProfile Offline { get; } = new() { Alias = "Sin conexión" };
+
+    [JsonIgnore] public bool IsOffline => ReferenceEquals(this, Offline);
+
     public DbConnection CreateConnection(string? database)
     {
         if (Kind == DbKind.Sqlite)

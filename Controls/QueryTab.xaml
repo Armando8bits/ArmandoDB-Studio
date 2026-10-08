@@ -94,15 +94,18 @@
                                    VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
             </TabItem>
             <!-- El plan se ve como diagrama (árbol de pasos) o como texto, a elegir. -->
-            <TabItem Header="Plan de ejecución">
+            <!-- Oculta hasta que se pide un plan: vacía solo confunde. -->
+            <TabItem x:Name="PlanTabItem" Header="Plan de ejecución" Visibility="Collapsed">
                 <DockPanel>
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4,6,2">
+                    <DockPanel DockPanel.Dock="Top" Margin="6,4,6,2" LastChildFill="False">
+                        <Button DockPanel.Dock="Right" Content="Cerrar plan" Padding="10,2" Click="ClosePlan_Click"
+                                ToolTip="Oculta esta pestaña; vuelve a aparecer al pedir otro plan"/>
                         <RadioButton x:Name="PlanAsDiagram" Content="Diagrama" GroupName="PlanView" VerticalAlignment="Center"
                                      Checked="PlanViewMode_Changed" Unchecked="PlanViewMode_Changed"
                                      ToolTip="Árbol de pasos; Ctrl+rueda para acercar o alejar"/>
                         <RadioButton x:Name="PlanAsText" Content="Texto" GroupName="PlanView" Margin="14,0,0,0" VerticalAlignment="Center"/>
                         <ContentControl x:Name="PlanLegend" Margin="10,0,0,0" VerticalAlignment="Center"/>
-                    </StackPanel>
+                    </DockPanel>
                     <Grid>
                         <!-- Sin ajuste de línea: el árbol de texto se lee por su sangría. -->
                         <avalon:TextEditor x:Name="PlanView" IsReadOnly="True" FontFamily="Consolas" FontSize="13" Padding="4,2"

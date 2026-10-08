@@ -48,9 +48,9 @@ public class StatusBarView : Border
         _tab = tab;
         bool production = tab?.Profile.IsProduction == true;
         _status.Text = tab?.StatusText ?? idleText;
-        _connection.Text = tab != null
-            ? $"{(production ? "PRODUCCIÓN  ·  " : "")}{tab.Profile.Name}  |  {tab.CurrentDatabase ?? "(sin base)"}"
-            : "";
+        _connection.Text = tab == null ? ""
+            : tab.IsOffline ? "Sin conexión"
+            : $"{(production ? "PRODUCCIÓN  ·  " : "")}{tab.Profile.Name}  |  {tab.CurrentDatabase ?? "(sin base)"}";
         _time.Text = tab?.TimeText ?? "";
         _rows.Text = tab?.RowsText ?? "";
         _rows.ToolTip = tab?.RowCount is { } rows ? $"Clic para copiar {rows}" : null;
