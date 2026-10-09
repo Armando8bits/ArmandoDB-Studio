@@ -35,6 +35,37 @@ internal sealed class MainWindowHarness
 public class MainWindowTests
 {
     [Fact]
+    public void Desconectar_no_cierra_los_scripts_los_deja_sin_conexion() => Ui.Run(async () =>
+    {
+        using var db = new SqliteDb();
+        using var folder = new TempFolder();
+        string file = folder.File("guardado.sql");
+        File.WriteAllText(file, "SELECT 'de archivo';");
+        var main = new MainWindowHarness();
+        main.AddConnection(db.Profile, "main");
+
+        var edited = (QueryTab)main.Call("AddTab", db.Profile, "main", null)!;
+        edited.SqlEditor.Document.Insert(0, "SELECT 'sin guardar';");
+        var fromFile = (QueryTab)main.Call("AddTab", db.Profile, "main", null)!;
+        fromFile.LoadFile(file);
+        main.Call("AddTab", db.Profile, "main", null);   // una consulta nueva, vacía
+
+        await (Task)main.Call("DisconnectAsync", db.Profile)!;
+
+        // Los dos scripts siguen abiertos, con su texto y su estado, pero ya sin conexión; la vacía se cerró sin preguntar.
+        Assert.Equal(new[] { edited, fromFile }, main.Tabs);
+        Assert.All(main.Tabs, tab => Assert.True(tab.IsOffline));
+        Assert.Equal(("SELECT 'sin guardar';", true), (edited.SqlEditor.Text, edited.IsDirty));
+        Assert.Equal(("SELECT 'de archivo';", false, file), (fromFile.SqlEditor.Text, fromFile.IsDirty, fromFile.FilePath));
+        Assert.True(edited.SqlEditor.CanUndo);   // ni siquiera se pierde el historial de deshacer
+
+        // Sin conexión no se ejecuta nada hasta volver a conectar.
+        await edited.ExecuteAsync();
+        Assert.Equal("Sin conexión.", edited.StatusText);
+        foreach (var tab in main.Tabs) tab.Close();
+    });
+
+    [Fact]
     public void Abrir_dos_resultados_de_la_busqueda_abre_dos_pestanas_independientes() => Ui.Run(async () =>
     {
         using var db = new SqliteDb();

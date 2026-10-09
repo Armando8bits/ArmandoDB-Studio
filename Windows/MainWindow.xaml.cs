@@ -821,18 +821,37 @@ public partial class MainWindow : Window
         new ProcessMonitorWindow(this, profile).Show();
     }
 
-    /// <summary>Cierra las pestañas de la conexión y la quita del explorador. Su sesión se conserva.</summary>
-    private void Disconnect(ConnectionProfile profile)
+    private void Disconnect(ConnectionProfile profile) => DisconnectAsync(profile).Watch("Desconectar");
+
+    /// <summary>
+    /// Cierra la conexión y la quita del explorador, sin cerrar los scripts: sus pestañas se quedan abiertas, sin
+    /// conexión, con su texto y sus cambios (como en SSMS). Se puede seguir editando y guardando; al ejecutar se
+    /// pedirá de nuevo la conexión. La sesión de la conexión se conserva para la próxima vez.
+    /// </summary>
+    private async Task DisconnectAsync(ConnectionProfile profile)
     {
         if (!_databases.ContainsKey(profile)) return;
 
-        // Como al salir: la sesión se guarda con lo que hay abierto, y cerrar las pestañas no la vacía.
+        var entries = _tabs.Where(t => t.Tab.Profile == profile).ToList();
+        if (entries.Any(t => t.Tab.IsRunning))
+        {
+            MessageBox.Show(this,
+                $"La conexión \"{profile.Name}\" tiene una consulta en curso.\n\nEspera a que termine (o cancélala) antes de desconectar.",
+                App.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Como al salir: la sesión se guarda con lo que hay abierto ahora; lo que sigue no la vacía.
         SaveSessions();
         _suspendSessionSave = true;
         try
         {
-            foreach (var entry in _tabs.Where(t => t.Tab.Profile == profile).ToList())
-                if (!CloseTab(entry)) return;
+            foreach (var entry in entries)
+            {
+                // Una consulta nueva vacía no aporta nada sin conexión: se cierra (no hay nada que preguntar).
+                if (entry.Tab.FilePath == null && !entry.Tab.HasText) CloseTab(entry);
+                else await entry.Tab.ChangeConnectionAsync(ConnectionProfile.Offline, null);
+            }
         }
         finally
         {

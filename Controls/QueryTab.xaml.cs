@@ -563,7 +563,7 @@ public partial class QueryTab : UserControl
         Profile = profile;
         CurrentDatabase = database;
         ApplyDialect();   // la otra conexión puede ser de otro motor
-        StatusText = $"Pestaña cambiada a {profile.Name}.";
+        StatusText = profile.IsOffline ? "Conexión cerrada. El script sigue abierto; al ejecutar se pedirá la conexión." : $"Pestaña cambiada a {profile.Name}.";
         StateChanged?.Invoke(this);
     }
 
