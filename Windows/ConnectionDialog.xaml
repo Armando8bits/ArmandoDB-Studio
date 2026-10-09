@@ -146,7 +146,17 @@
             </DockPanel>
 
             <!-- Resultado de probar/guardar y errores de validación, sin ventanas emergentes -->
-            <TextBlock DockPanel.Dock="Bottom" x:Name="StatusLine" TextWrapping="Wrap" MinHeight="34" Margin="0,10,0,0"/>
+            <DockPanel DockPanel.Dock="Bottom" MinHeight="34" Margin="0,10,0,0">
+                <!-- Arco que gira mientras se prueba la conexión o se conecta (ver SetBusy): indica que hay actividad. -->
+                <Path DockPanel.Dock="Left" x:Name="BusySpinner" Visibility="Collapsed" Width="16" Height="16" Margin="0,1,8,0"
+                      VerticalAlignment="Top" Data="M8,1.5 A6.5,6.5 0 1 1 1.5,8" Stroke="{DynamicResource Brush.SecondaryText}"
+                      StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+                    <Path.RenderTransform>
+                        <RotateTransform x:Name="BusySpinnerRotation"/>
+                    </Path.RenderTransform>
+                </Path>
+                <TextBlock x:Name="StatusLine" TextWrapping="Wrap"/>
+            </DockPanel>
 
             <StackPanel>
                 <Grid>

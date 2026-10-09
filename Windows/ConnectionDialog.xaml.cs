@@ -213,6 +213,13 @@ public partial class ConnectionDialog : Window
         TestButton.IsEnabled = SaveButton.IsEnabled = ConnectButton.IsEnabled = !busy;
         NewButton.IsEnabled = SavedList.IsEnabled = !busy;
         DeleteButton.IsEnabled = !busy && Selected != null;
+
+        // El arco gira junto al texto ("Conectando...") mientras dura la espera.
+        BusySpinner.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        BusySpinnerRotation.BeginAnimation(System.Windows.Media.RotateTransform.AngleProperty, busy
+            ? new System.Windows.Media.Animation.DoubleAnimation(0, 360, TimeSpan.FromSeconds(0.9))
+                { RepeatBehavior = System.Windows.Media.Animation.RepeatBehavior.Forever }
+            : null);
     }
 
     /// <summary>Valida el formulario; si algo falta lo indica en la línea de estado y enfoca el campo.</summary>
