@@ -41,6 +41,8 @@ public class ProcessMonitorWindow : Window
         Height = 560;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
+        Icon = owner.Icon;
+        RollUp.Attach(this);   // minimizar la pliega a su barra de título, dentro de la aplicación
 
         GridStyles.ApplyCompact(_grid);
         _grid.FontSize = AppSettings.Current.GridFontSize;

@@ -6,7 +6,7 @@ using ICSharpCode.AvalonEdit;
 namespace MySmdb;
 
 /// <summary>
-/// Buscar y reemplazar (Ctrl+H) sobre el editor de la pestaña activa. Ventana no modal: se puede seguir
+/// Buscar y reemplazar (Ctrl+Mayús+H) sobre el editor de la pestaña activa. Ventana no modal: se puede seguir
 /// editando, y si cambias de pestaña actúa sobre la nueva.
 /// </summary>
 public class ReplaceDialog : Window

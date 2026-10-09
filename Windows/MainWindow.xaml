@@ -27,7 +27,7 @@
                 <MenuItem x:Name="RedoMenuItem" Header="Re_hacer" InputGestureText="Ctrl+Y" Click="Redo_Click" IsEnabled="False"/>
                 <Separator/>
                 <MenuItem Header="_Buscar..." InputGestureText="Ctrl+F" Click="Find_Click"/>
-                <MenuItem Header="_Reemplazar..." InputGestureText="Ctrl+H" Click="Replace_Click"/>
+                <MenuItem Header="_Reemplazar..." InputGestureText="Ctrl+Mayús+H" Click="Replace_Click"/>
                 <Separator/>
                 <MenuItem Header="_Formatear SQL" InputGestureText="Ctrl+Mayús+F" Click="Format_Click"/>
                 <MenuItem Header="_Autocompletar" InputGestureText="Ctrl+Espacio" Click="Complete_Click"/>
@@ -63,7 +63,24 @@
             </MenuItem>
             <MenuItem Header="_Herramientas">
                 <MenuItem x:Name="DiagramMenuItem" Header="_Diagrama de la base de datos..." Click="Diagram_Click"/>
+                <MenuItem x:Name="SearchDatabaseMenuItem" Header="_Buscar en la base de datos..." InputGestureText="Ctrl+Mayús+B" Click="SearchDatabase_Click"/>
                 <MenuItem Header="_Monitor de procesos (MySQL)..." Click="ProcessMonitor_Click"/>
+                <Separator/>
+                <MenuItem Header="_Historial de consultas">
+                    <MenuItem Header="_Ver el historial..." InputGestureText="Ctrl+H" Click="History_Click"/>
+                    <MenuItem x:Name="HistoryEnabledItem" Header="_Guardar las consultas ejecutadas" IsCheckable="True" Click="HistoryEnabled_Click"
+                              ToolTip="El texto de cada consulta ejecutada se guarda en la carpeta de datos de la aplicación"/>
+                    <Separator/>
+                    <!-- Cuánto se conserva (AppSettings.HistoryRetentionDays); el Tag es el número de días. -->
+                    <MenuItem x:Name="HistorySessionItem" Header="Conservar solo durante esta _sesión" IsCheckable="True" Click="HistoryRetention_Click" Tag="0"
+                              ToolTip="El historial se borra al cerrar la aplicación"/>
+                    <MenuItem x:Name="History30Item" Header="Conservar _30 días" IsCheckable="True" Click="HistoryRetention_Click" Tag="30"/>
+                    <MenuItem x:Name="History90Item" Header="Conservar _90 días" IsCheckable="True" Click="HistoryRetention_Click" Tag="90"/>
+                    <MenuItem x:Name="HistoryForeverItem" Header="Conservar sin _límite de tiempo" IsCheckable="True" Click="HistoryRetention_Click" Tag="-1"
+                              ToolTip="Solo se descartan las más antiguas al pasar de 5.000 consultas"/>
+                    <Separator/>
+                    <MenuItem Header="_Borrar el historial..." Click="ClearHistory_Click"/>
+                </MenuItem>
                 <Separator/>
                 <MenuItem Header="_Fuente y tamaño..." Click="Font_Click"/>
                 <MenuItem Header="_Confirmaciones antes de ejecutar">

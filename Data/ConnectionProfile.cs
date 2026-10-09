@@ -91,6 +91,45 @@ public class ConnectionProfile
 
     [JsonIgnore] public bool IsOffline => ReferenceEquals(this, Offline);
 
+    /// <summary>
+    /// ¿Lleva al mismo sitio que la otra? Mismo motor, servidor, puerto, usuario, archivo y túnel SSH.
+    /// La contraseña, el alias y la marca de producción no cambian el destino.
+    /// </summary>
+    public bool SameTarget(ConnectionProfile other) =>
+        Kind == other.Kind
+        && string.Equals(Host, other.Host, StringComparison.OrdinalIgnoreCase) && Port == other.Port
+        && User == other.User && IntegratedSecurity == other.IntegratedSecurity
+        && string.Equals(FilePath, other.FilePath, StringComparison.OrdinalIgnoreCase)
+        && UseSsh == other.UseSsh
+        && (!UseSsh || (string.Equals(SshHost, other.SshHost, StringComparison.OrdinalIgnoreCase) && SshPort == other.SshPort
+                        && SshUser == other.SshUser && SshKeyFile == other.SshKeyFile));
+
+    /// <summary>Toma todos los datos de la otra (al editar una conexión que ya está abierta).</summary>
+    public void CopyFrom(ConnectionProfile other)
+    {
+        Kind = other.Kind;
+        FilePath = other.FilePath;
+        Host = other.Host;
+        Port = other.Port;
+        User = other.User;
+        Database = other.Database;
+        ProtectedPassword = other.ProtectedPassword;
+        Password = other.Password;
+        Alias = other.Alias;
+        IsProduction = other.IsProduction;
+        IntegratedSecurity = other.IntegratedSecurity;
+        UseSsh = other.UseSsh;
+        SshHost = other.SshHost;
+        SshPort = other.SshPort;
+        SshUser = other.SshUser;
+        SshKeyFile = other.SshKeyFile;
+        SshHostKey = other.SshHostKey;
+        ProtectedSshPassword = other.ProtectedSshPassword;
+        ProtectedSshPassphrase = other.ProtectedSshPassphrase;
+        SshPassword = other.SshPassword;
+        SshPassphrase = other.SshPassphrase;
+    }
+
     public DbConnection CreateConnection(string? database)
     {
         if (Kind == DbKind.Sqlite)

@@ -44,7 +44,16 @@ Orden recomendado para la primera prueba: conexión marcada como **Producción**
 - [ ] Monitor con muchas conexiones a la vez.
 - [ ] Caída real del túnel SSH (se simuló cortando el cliente, no la red).
 
+### Buscar en la base de datos e historial de consultas
+
+- [ ] Buscar en la base de datos en **MySQL** y en **Sybase**: las consultas al catálogo solo se han probado en SQLite y SQL Server. Son solo lecturas (`information_schema` en MySQL; `sysobjects`, `syscolumns` y `syscomments` en Sybase).
+- [ ] En Sybase, un texto partido entre dos trozos de `syscomments` (255 caracteres) no se encuentra al buscar en el código.
+- [ ] Historial: no distingue qué sentencia de un script falló, guarda el script ejecutado entero con su primer error.
+
 ### Interfaz (comprobado por programa, no con teclado y ratón)
+
+- [ ] Vistas duplicadas, pestañas sin conexión, "Abrir reciente", "Guardar todo" y "Cerrar todas".
+- [ ] Ventanas de historial y de búsqueda: abrir un resultado con doble clic, filtros y atajos (Ctrl+H, Ctrl+Mayús+B; Reemplazar pasó a Ctrl+Mayús+H).
 
 - [ ] Atajos: Alt+flechas, Alt+Intro, Ctrl+R y Ctrl+Mayús+R.
 - [ ] Arrastrar la esquina de una tabla del diagrama para redimensionarla.
@@ -56,9 +65,9 @@ Orden recomendado para la primera prueba: conexión marcada como **Producción**
 ## 3. Detectado en la revisión de código y no corregido
 
 - [ ] **Copia de seguridad en MySQL con columnas generadas:** el `INSERT` las incluye y la restauración fallaría. Hay que excluirlas; requiere probar contra un MySQL donde se pueda escribir.
-- [ ] **Reconectar una conexión ya abierta tras cambiarle servidor, puerto o usuario:** sigue usando los datos antiguos hasta desconectar. Hoy solo se actualiza la contraseña.
-- [ ] **`DELETE` o `UPDATE` precedidos de `WITH`:** no entran en la revisión de sentencias peligrosas.
-- [ ] **Resultado truncado a 500.000 filas:** al llegar al tope se deja de guardar, pero el resto de filas se sigue leyendo del servidor antes de terminar.
+- [x] **Reconectar una conexión ya abierta tras cambiarle servidor, puerto o usuario:** ahora todo lo abierto pasa al nuevo destino (explorador, pestañas, túnel y autocompletado). Falta probarlo a mano con una conexión real.
+- [x] **`DELETE` o `UPDATE` precedidos de `WITH`:** ya entran en la revisión de sentencias peligrosas.
+- [x] **Resultado truncado a 500.000 filas:** al llegar al tope se cancela la lectura. Probado en SQLite y SQL Server; en MySQL y Sybase falta comprobarlo con un resultado grande de verdad.
 - [ ] **Columnas calculadas, restricciones `CHECK` y reglas en Sybase:** el script `CREATE` de una tabla no las incluye.
 - [ ] **Formateador de SQL e iconos:** no se revisaron a fondo.
 

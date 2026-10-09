@@ -44,6 +44,32 @@ internal static class Ui
         });
         failure?.Throw();
     }
+
+    /// <summary>
+    /// Igual, para pruebas que esperan algo (ejecutar una consulta): cada "await" vuelve al hilo de interfaz,
+    /// como en la aplicación, mientras el hilo de la prueba espera fuera.
+    /// </summary>
+    public static void Run(Func<Task> test) =>
+        Shared.Value.InvokeAsync(test).Task.Unwrap().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Ventana ya mostrada, fuera de la pantalla, para hacer de dueña de las ventanas que se prueban
+    /// (WPF no admite como dueña una ventana que nunca se mostró). Hay que cerrarla al terminar.
+    /// </summary>
+    public static System.Windows.Window HiddenOwner()
+    {
+        var owner = new System.Windows.Window
+        {
+            Left = -20000, Top = -20000, Width = 400, Height = 300, ShowInTaskbar = false, ShowActivated = false,
+            WindowStartupLocation = System.Windows.WindowStartupLocation.Manual, WindowStyle = System.Windows.WindowStyle.None,
+        };
+        owner.Show();
+        return owner;
+    }
+
+    /// <summary>Deja que la ventana termine de cargarse y pintar (enlaces de datos, eventos Loaded).</summary>
+    public static Task Settle() =>
+        Shared.Value.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle).Task;
 }
 
 /// <summary>"Duplicar vista": varias pestañas sobre el mismo script.</summary>

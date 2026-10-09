@@ -14,6 +14,8 @@ If you love hitting **`Ctrl + E`** to instantly execute your selected query (jus
 ## Features
 - **SSMS-Style Execution:** Press `Ctrl + E` to run the entire script or just the highlighted selection seamlessly.
 - **Multi-Engine Support:** Works with **MySQL** (remote VMs, local instances), **SQLite** and **Microsoft SQL Server** (SQL login or Windows authentication, named instances, LocalDB, `GO` batches) databases, plus experimental support for **Sybase ASE**.
+- **Query history:** Every query you run is kept with its connection, duration, row count and result, so you can search it and reopen it later (`Ctrl + H`). The query text is stored unencrypted in the app's data folder on your computer; from the Tools menu you can choose how long it is kept (this session only, 30 days, 90 days by default, or no time limit), turn it off or clear it.
+- **Search the database:** Find a text in table, view, procedure, function and trigger names, in column names and inside the code of views, routines and triggers, and jump to the object's script (`Ctrl + Shift + B`).
 - **Zero Bloat / Zero Ads:** Open-source, lightweight, no telemetry, no "upgrade to Pro" nags.
 - **Customized UI:** Built by a developer, for developers, focusing purely on productivity and speed.
 
@@ -27,6 +29,8 @@ If you love hitting **`Ctrl + E`** to instantly execute your selected query (jus
 - **Dangerous-statement confirmation is a safety net, not a guarantee.** On SQL Server and Sybase, statements inside a batch are told apart by `;` and by the keyword that starts each line, which is an approximation; and a stored procedure run with `EXEC` only asks for confirmation on connections marked as production.
 - **SQL formatting** is skipped for scripts containing `DELIMITER` or `GO`; select just the query you want to format.
 - **Execution plans on SQL Server** require the `SHOWPLAN` permission on the database.
+- **Searching the database** has been tested on SQLite and SQL Server; on MySQL and Sybase ASE it has not been verified yet. On Sybase, a text that falls across two 255-character chunks of stored code is not found.
+- **Result sets are capped at 500,000 rows.** When the cap is reached the query is cancelled, so later result sets of that same statement or batch are not read.
 - **Result grids are read-only:** there is no in-grid data editing, table designer or schema comparison.
 
 ---
@@ -47,6 +51,8 @@ Si te encanta presionar **`Ctrl + E`** para ejecutar al instante tu consulta sel
 ## Características
 - **Ejecución estilo SSMS:** Presiona `Ctrl + E` para ejecutar todo el script o únicamente el texto seleccionado sin fricciones.
 - **Soporte Multi-motor:** Funciona con bases de datos **MySQL** (en VMs remotas, servidores locales), **SQLite** y **Microsoft SQL Server** (usuario de SQL o autenticación de Windows, instancias con nombre, LocalDB, lotes `GO`), más soporte experimental para **Sybase ASE**.
+- **Historial de consultas:** Cada consulta que ejecutas se guarda con su conexión, duración, filas y resultado, para buscarla y reabrirla después (`Ctrl + H`). El texto de las consultas se guarda sin cifrar en la carpeta de datos de la aplicación, en tu equipo; desde el menú Herramientas se elige cuánto se conserva (solo esta sesión, 30 días, 90 días por defecto o sin límite de tiempo), y se puede desactivar o borrar.
+- **Buscar en la base de datos:** Encuentra un texto en los nombres de tablas, vistas, procedimientos, funciones y triggers, en los nombres de columna y dentro del código de vistas, rutinas y triggers, y salta al script del objeto (`Ctrl + Mayús + B`).
 - **Cero peso innecesario / Cero publicidad:** Código abierto, ligero, sin telemetría ni anuncios de "actualizar a Pro".
 - **Interfaz a medida:** Creado por un desarrollador para desarrolladores, enfocado 100% en la productividad y la velocidad.
 
@@ -60,6 +66,8 @@ Si te encanta presionar **`Ctrl + E`** para ejecutar al instante tu consulta sel
 - **La confirmación de sentencias peligrosas es una red de seguridad, no una garantía.** En SQL Server y Sybase, las sentencias de un lote se distinguen por el `;` y por la palabra con la que empieza cada línea, que es una aproximación; y un procedimiento ejecutado con `EXEC` solo pide confirmación en las conexiones marcadas como producción.
 - **Formatear SQL** no se aplica a scripts que contengan `DELIMITER` o `GO`; selecciona solo la consulta que quieras formatear.
 - **Los planes de ejecución en SQL Server** requieren el permiso `SHOWPLAN` sobre la base.
+- **Buscar en la base de datos** está probado en SQLite y SQL Server; en MySQL y Sybase ASE aún no se ha verificado. En Sybase, un texto que cae entre dos trozos de 255 caracteres del código guardado no se encuentra.
+- **Los resultados tienen un tope de 500.000 filas.** Al alcanzarlo la consulta se cancela, así que los conjuntos de resultados posteriores de esa misma sentencia o lote no se leen.
 - **Las cuadrículas de resultados son de solo lectura:** no hay edición de datos en la cuadrícula, diseñador de tablas ni comparación de esquemas.
 
 ---

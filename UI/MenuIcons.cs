@@ -36,6 +36,8 @@ public static class MenuIcons
         ("Diagrama", ExplorerIcon.Diagram), ("Ver diagrama", ExplorerIcon.Diagram),
         ("Monitor de procesos", ExplorerIcon.Monitor),
         ("Fuente", ExplorerIcon.Font), ("Confirmaciones", ExplorerIcon.Confirm), ("Tema", ExplorerIcon.Theme),
+        ("Historial de consultas", ExplorerIcon.History), ("Ver el historial", ExplorerIcon.History),
+        ("Borrar", ExplorerIcon.Close),
         ("Atajos", ExplorerIcon.Keyboard), ("Registro de errores", ExplorerIcon.Log), ("Acerca de", ExplorerIcon.About),
         ("Actualizar", ExplorerIcon.Refresh),
         ("Copia de seguridad", ExplorerIcon.Backup), ("Restaurar", ExplorerIcon.Restore), ("Importar", ExplorerIcon.Import),

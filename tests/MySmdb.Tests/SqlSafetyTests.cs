@@ -124,6 +124,43 @@ public class SqlSafetyTests
         Assert.Single(Review("DELETE FROM t;", production: true, productionWrites: false));
     }
 
+    [Theory]
+    [InlineData("WITH c AS (SELECT id FROM t) DELETE FROM t;")]
+    [InlineData("with c as (select id from t where id > 5) delete from t")]                 // el WHERE es de la CTE
+    [InlineData("WITH a AS (SELECT 1), b AS (SELECT 2 FROM a WHERE 1 = 1) UPDATE t SET x = 1;")]
+    [InlineData("WITH RECURSIVE c (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 9) DELETE FROM t;")]
+    [InlineData("WITH `mi cte` AS (SELECT f(1, (2)) AS v) UPDATE t SET x = 1;")]
+    [InlineData("WITH c AS MATERIALIZED (SELECT 1) DELETE FROM t;")]
+    public void Avisa_de_UPDATE_y_DELETE_sin_WHERE_precedidos_de_WITH(string sql)
+    {
+        Assert.Contains("sin WHERE", Assert.Single(Review(sql)));
+    }
+
+    [Theory]
+    [InlineData("WITH c AS (SELECT id FROM t) DELETE FROM t WHERE id IN (SELECT id FROM c);")]
+    [InlineData("WITH c AS (SELECT id FROM t) SELECT * FROM c;")]
+    [InlineData("WITH c AS (SELECT 'delete from t' AS texto) SELECT * FROM c;")]
+    public void Con_WITH_no_avisa_si_la_sentencia_principal_no_es_peligrosa(string sql)
+    {
+        Assert.Empty(Review(sql));
+    }
+
+    [Fact]
+    public void Con_WITH_en_produccion_cuenta_la_sentencia_principal()
+    {
+        Assert.Contains("modifica datos", Assert.Single(Review("WITH c AS (SELECT 1 AS id) INSERT INTO t SELECT id FROM c;", production: true)));
+        Assert.Contains("modifica datos", Assert.Single(Review("WITH c AS (SELECT 1 AS id) DELETE FROM t WHERE id IN (SELECT id FROM c);", production: true)));
+        Assert.Empty(Review("WITH c AS (SELECT 1 AS id) SELECT * FROM c;", production: true));
+    }
+
+    [Theory]
+    [InlineData(";WITH c AS (SELECT id FROM t WHERE id > 5) DELETE FROM c")]
+    [InlineData("WITH c AS (\n    SELECT id FROM t WHERE id > 5\n)\nDELETE FROM c")]
+    public void TSql_avisa_del_DELETE_sin_WHERE_tras_un_WITH(string sql)
+    {
+        Assert.Contains(Review(sql, DbKind.SqlServer), w => w.Contains("sin WHERE"));
+    }
+
     [Fact]
     public void Un_aviso_por_sentencia()
     {

@@ -34,6 +34,15 @@ public class AppSettings
     /// <summary>Plan de ejecución como diagrama (true) o como texto (false).</summary>
     public bool PlanAsDiagram { get; set; } = true;
 
+    /// <summary>Guardar cada consulta ejecutada en el historial (su texto queda en disco, en la carpeta de datos).</summary>
+    public bool HistoryEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Cuánto se conserva el historial: días (30, 90...); 0 = solo durante esta sesión (se borra al cerrar);
+    /// -1 = sin límite de tiempo (solo el tope de entradas).
+    /// </summary>
+    public int HistoryRetentionDays { get; set; } = 90;
+
     /// <summary>Tope de la lista "Abrir reciente".</summary>
     public const int MaxRecentFiles = 15;
 

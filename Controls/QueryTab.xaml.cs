@@ -61,8 +61,8 @@ public sealed class ScriptFile
 
 public partial class QueryTab : UserControl
 {
-    /// <summary>Tope de filas por conjunto de resultados, para no agotar la memoria.</summary>
-    private const int MaxRows = 500_000;
+    /// <summary>Tope de filas por conjunto de resultados, para no agotar la memoria. (Las pruebas lo bajan.)</summary>
+    public static int MaxRows { get; set; } = 500_000;
 
     /// <summary>Alto máximo de cada cuadrícula cuando hay varios resultados apilados.</summary>
     private const double MaxStackedGridHeight = 260;
@@ -220,6 +220,30 @@ public partial class QueryTab : UserControl
     private void UndoStack_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is "CanUndo" or "CanRedo") StateChanged?.Invoke(this);
+    }
+
+    /// <summary>
+    /// Deja a la vista la primera aparición del texto, sin seleccionarla: con el texto seleccionado, lo siguiente
+    /// que se escribiera o pegara lo sustituiría. Devuelve la línea, o 0 si no está.
+    /// </summary>
+    public int ShowFirst(string text)
+    {
+        int index = text.Length == 0 ? -1 : Editor.Text.IndexOf(text, StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return 0;
+        int line = Editor.Document.GetLineByOffset(index).LineNumber;
+        // El editor puede no haberse medido aún (pestaña recién creada): se desplaza cuando ya tiene tamaño.
+        Dispatcher.BeginInvoke(() => Editor.ScrollTo(line, 1), System.Windows.Threading.DispatcherPriority.Loaded);
+        return line;
+    }
+
+    /// <summary>
+    /// Pone el cursor al final, en una línea nueva y sin nada seleccionado: tras generar un script, lo que se
+    /// escriba o se pegue a continuación va después, no en medio.
+    /// </summary>
+    public void MoveCaretToEnd()
+    {
+        Editor.SelectionLength = 0;
+        Editor.CaretOffset = Editor.Document.TextLength;
     }
 
     /// <summary>Coloca el cursor y el desplazamiento donde los tiene otra vista del mismo script.</summary>
@@ -509,6 +533,21 @@ public partial class QueryTab : UserControl
     }
 
     /// <summary>
+    /// Suelta la conexión abierta: la próxima ejecución abre una nueva con los datos actuales del perfil.
+    /// Para cuando la conexión se editó (otro servidor, puerto o usuario) con la pestaña ya abierta.
+    /// </summary>
+    public void ResetConnection()
+    {
+        if (IsRunning) return;
+        var conn = _conn;
+        _conn = null;
+        if (conn != null)
+            _ = Task.Run(async () => { try { await conn.DisposeAsync(); } catch { } });
+        ApplyDialect();   // el perfil puede haber cambiado de motor
+        StateChanged?.Invoke(this);
+    }
+
+    /// <summary>
     /// Pasa la pestaña a otra conexión (y base): el texto se conserva y la próxima ejecución va contra ella.
     /// Sirve para cuando se abrió la consulta en la conexión equivocada.
     /// </summary>
@@ -703,6 +742,9 @@ public partial class QueryTab : UserControl
         var log = new StringBuilder();
         bool failed = false, cancelled = false;
         string? database = CurrentDatabase;
+        // Para el historial: lo que se ejecuta (la selección o todo), dónde y el primer error.
+        string executed = Editor.SelectionLength > 0 ? Editor.SelectedText : Editor.Text;
+        string? startDatabase = database, firstError = null;
         var watch = Stopwatch.StartNew();
 
         try
@@ -723,7 +765,8 @@ public partial class QueryTab : UserControl
                         catch (Exception ex) when (Db.IsDatabaseError(ex) && !token.IsCancellationRequested)
                         {
                             // En una sola línea: la vista de texto pinta en rojo las líneas que empiezan por "Error".
-                            log.AppendLine($"Error {Db.ErrorCode(ex)}, línea {ErrorLine(ex, statement.Line + lineOffset)}: {ex.Message.ReplaceLineEndings(" ")}");
+                            firstError = $"Error {Db.ErrorCode(ex)}, línea {ErrorLine(ex, statement.Line + lineOffset)}: {ex.Message.ReplaceLineEndings(" ")}";
+                            log.AppendLine(firstError);
                             failed = true;
                             break;
                         }
@@ -747,13 +790,18 @@ public partial class QueryTab : UserControl
         }
         catch (Exception ex)
         {
-            log.AppendLine("Error: " + ex.Message.ReplaceLineEndings(" "));
+            firstError = "Error: " + ex.Message.ReplaceLineEndings(" ");
+            log.AppendLine(firstError);
             failed = true;
         }
 
         watch.Stop();
         _cts.Dispose();
         _cts = null;
+
+        QueryHistory.Add(new HistoryEntry(DateTime.Now, Profile.Name, startDatabase, executed.Trim(), watch.Elapsed.TotalSeconds,
+            cancelled ? null : results.Sum(r => r.Rows.Count),
+            cancelled ? HistoryEntry.Cancelled : failed ? HistoryEntry.Failed : HistoryEntry.Ok, firstError));
 
         if (cancelled) log.AppendLine("La consulta fue cancelada por el usuario.");
         log.AppendLine();
@@ -1227,44 +1275,62 @@ public partial class QueryTab : UserControl
         await using var cmd = _conn!.CreateCommand();
         cmd.CommandText = sql;
         cmd.CommandTimeout = 0;
-        await using var reader = await cmd.ExecuteReaderAsync(token);
+        var reader = await cmd.ExecuteReaderAsync(token);
 
-        bool anyResultSet = false;
-        do
+        bool anyResultSet = false, truncated = false;
+        try
         {
-            if (reader.FieldCount == 0) continue;
-            anyResultSet = true;
-
-            var columns = new string[reader.FieldCount];
-            for (int i = 0; i < columns.Length; i++)
-                columns[i] = reader.GetName(i);
-
-            var result = new ResultSet { Columns = columns, SourceTable = SingleSourceTable(reader) };
-            while (await reader.ReadAsync(token))
+            do
             {
-                if (result.Rows.Count >= MaxRows)
+                if (reader.FieldCount == 0) continue;
+                anyResultSet = true;
+
+                var columns = new string[reader.FieldCount];
+                for (int i = 0; i < columns.Length; i++)
+                    columns[i] = reader.GetName(i);
+
+                var result = new ResultSet { Columns = columns, SourceTable = SingleSourceTable(reader) };
+                while (await reader.ReadAsync(token))
                 {
-                    result.Truncated = true;
-                    break;
+                    if (result.Rows.Count >= MaxRows)
+                    {
+                        result.Truncated = truncated = true;
+                        break;
+                    }
+                    var row = new object?[columns.Length];
+                    for (int i = 0; i < row.Length; i++)
+                        row[i] = ReadValue(reader, i);
+                    result.Rows.Add(row);
                 }
-                var row = new object?[columns.Length];
-                for (int i = 0; i < row.Length; i++)
-                    row[i] = ReadValue(reader, i);
-                result.Rows.Add(row);
+                results.Add(result);
+
+                // Los datos solo se ven en la cuadrícula; aquí queda el registro de lo ocurrido.
+                log.AppendLine($"{result.Rows.Count} filas en el conjunto ({Seconds(watch)})");
+                if (result.Truncated)
+                    log.AppendLine($"Aviso: el resultado se truncó a {MaxRows} filas. El resto no se leyó, ni los resultados siguientes de esta sentencia.");
+                log.AppendLine();
+            } while (!truncated && await reader.NextResultAsync(token));
+
+            if (truncated) return;
+            if (reader.RecordsAffected >= 0)
+                log.AppendLine($"Consulta OK, {reader.RecordsAffected} filas afectadas ({Seconds(watch)})").AppendLine();
+            else if (!anyResultSet)
+                log.AppendLine($"Consulta OK ({Seconds(watch)})").AppendLine();
+        }
+        finally
+        {
+            if (truncated)
+            {
+                // Sin cancelar, cerrar el lector seguiría trayendo del servidor todas las filas que faltan.
+                // Tras cancelar, el propio cierre puede quejarse de que la consulta se interrumpió: es lo esperado.
+                try { cmd.Cancel(); } catch { }
+                try { await reader.DisposeAsync(); } catch { }
             }
-            results.Add(result);
-
-            // Los datos solo se ven en la cuadrícula; aquí queda el registro de lo ocurrido.
-            log.AppendLine($"{result.Rows.Count} filas en el conjunto ({Seconds(watch)})");
-            if (result.Truncated)
-                log.AppendLine($"Aviso: el resultado se truncó a {MaxRows} filas.");
-            log.AppendLine();
-        } while (await reader.NextResultAsync(token));
-
-        if (reader.RecordsAffected >= 0)
-            log.AppendLine($"Consulta OK, {reader.RecordsAffected} filas afectadas ({Seconds(watch)})").AppendLine();
-        else if (!anyResultSet)
-            log.AppendLine($"Consulta OK ({Seconds(watch)})").AppendLine();
+            else
+            {
+                await reader.DisposeAsync();
+            }
+        }
     }
 
     private static string Seconds(Stopwatch watch) =>

@@ -122,6 +122,8 @@ public partial class MainWindow : Window
         DockMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.DockBack);
         // El resto de opciones del menú principal toman su icono por el texto (ver MenuIcons).
         MenuIcons.Apply(MainMenu);
+        HistoryEnabledItem.IsChecked = AppSettings.Current.HistoryEnabled;
+        UpdateHistoryMenu();
         SnippetsEnabledItem.IsChecked = AppSettings.Current.SnippetsEnabled;
         AutoCompleteItem.IsChecked = AppSettings.Current.AutoCompleteEnabled;
         ConfirmDangerousItem.IsChecked = AppSettings.Current.ConfirmDangerous;
@@ -262,7 +264,8 @@ public partial class MainWindow : Window
             e.Handled = true;
             Current?.OpenSearch();
         }
-        else if (modifiers == ModifierKeys.Control && e.Key == Key.H)
+        // Reemplazar pasó a Ctrl+Mayús+H: Ctrl+H es ahora el historial de consultas.
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.H)
         {
             e.Handled = true;
             OpenReplace();
@@ -296,6 +299,16 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             SaveAll();
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.B)
+        {
+            e.Handled = true;
+            SearchDatabase();
+        }
+        else if (modifiers == ModifierKeys.Control && e.Key == Key.H)
+        {
+            e.Handled = true;
+            ShowHistory();
         }
         else if (modifiers == ModifierKeys.Alt && (e.Key == Key.System ? e.SystemKey : e.Key) is Key.Left or Key.Right or Key.Up or Key.Down
                  && Keyboard.FocusedElement is not (ComboBox or ComboBoxItem))   // en un desplegable, Alt+↓ lo abre
@@ -501,10 +514,12 @@ public partial class MainWindow : Window
             "Alt+Pausa\t\tCancelar la ejecución\n\n" +
             "Ctrl+N / Ctrl+O / Ctrl+S\tNueva consulta / Abrir / Guardar\n" +
             "Ctrl+Mayús+S\t\tGuardar todas las consultas con cambios\n" +
+            "Ctrl+H\t\t\tHistorial de consultas\n" +
+            "Ctrl+Mayús+B\t\tBuscar en la base de datos\n" +
             "Ctrl+W\t\t\tCerrar la pestaña\n" +
             "Ctrl+Tab\t\tPestaña siguiente (con Mayús, anterior)\n\n" +
             "Ctrl+Z / Ctrl+Y\t\tDeshacer / Rehacer\n" +
-            "Ctrl+F / Ctrl+H\t\tBuscar / Reemplazar\n" +
+            "Ctrl+F / Ctrl+Mayús+H\tBuscar / Reemplazar\n" +
             "Ctrl+Mayús+F\t\tFormatear SQL\n" +
             "Ctrl+Espacio\t\tAutocompletar\n" +
             "Tab\t\t\tExpandir un fragmento (sel, upd, ij...)\n\n" +
@@ -553,6 +568,35 @@ public partial class MainWindow : Window
             root.IsExpanded = true;
 
             if (RestoreSession(profile, dialog.Profile.Database)) return (profile, dialog.Profile.Database);
+        }
+        else if (!profile.SameTarget(dialog.Profile))
+        {
+            // La conexión ya abierta se editó y ahora apunta a otro sitio (servidor, puerto, usuario, túnel...):
+            // todo lo abierto con ella pasa al nuevo destino.
+            if (_tabs.Any(t => t.Tab.Profile == profile && t.Tab.IsRunning))
+            {
+                MessageBox.Show(this,
+                    $"La conexión \"{profile.Name}\" ha cambiado de servidor, puerto o usuario, pero tiene una consulta en curso.\n\n" +
+                    "Espera a que termine (o cancélala) y vuelve a conectar para aplicar el cambio.",
+                    App.Name, MessageBoxButton.OK, MessageBoxImage.Warning);
+                return null;
+            }
+
+            SshTunnels.Close(profile);   // antes de copiar: el túnel abierto es el del destino anterior
+            profile.CopyFrom(dialog.Profile);
+            SchemaCache.Invalidate(profile);
+            foreach (var entry in _tabs.Where(t => t.Tab.Profile == profile))
+            {
+                entry.Tab.ResetConnection();
+                StyleHeader(entry);
+            }
+            var root = Explorer.Items.Cast<TreeViewItem>().FirstOrDefault(i => (i.Tag as Node)?.Profile == profile);
+            if (root != null)
+            {
+                root.Header = ServerHeader(profile);
+                root.ToolTip = profile.DefaultName;
+                await RefreshAsync(root, (Node)root.Tag);
+            }
         }
         else
         {
@@ -615,6 +659,154 @@ public partial class MainWindow : Window
             return;
         }
         new DiagramWindow(target.Profile, target.Database, Icon).Show();
+    }
+
+    // ---------- Buscar en la base de datos ----------
+
+    private void SearchDatabase_Click(object sender, RoutedEventArgs e) => SearchDatabase();
+
+    /// <summary>Busca en la base seleccionada en el explorador (o en la de la pestaña actual).</summary>
+    private void SearchDatabase()
+    {
+        if (SelectedDatabase() is not { } target)
+        {
+            MessageBox.Show(this, "Selecciona una base de datos en el explorador (o abre una pestaña conectada a ella).",
+                "Buscar en la base de datos", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        SearchDatabase(target.Profile, target.Database);
+    }
+
+    private void SearchDatabase(ConnectionProfile profile, string database) =>
+        new SearchDatabaseWindow(this, profile, database, (hit, text) => OpenSearchHitAsync(profile, database, hit, text)).Show();
+
+    /// <summary>Abre el script del objeto encontrado en una pestaña nueva y señala en él el texto buscado.</summary>
+    private async Task OpenSearchHitAsync(ConnectionProfile profile, string database, SearchHit hit, string text)
+    {
+        if (!_databases.ContainsKey(profile))
+        {
+            MessageBox.Show(this, $"La conexión \"{profile.Name}\" ya no está abierta.", App.Name, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var kind = hit.Kind switch
+        {
+            SchemaObject.View => NodeKind.View,
+            SchemaObject.Procedure => NodeKind.Procedure,
+            SchemaObject.Function => NodeKind.Function,
+            SchemaObject.Trigger => NodeKind.Trigger,
+            _ => NodeKind.Table,
+        };
+        int before = _tabs.Count;
+        _activeGroup = _main.ActiveGroup is { } last && _main.Groups.Contains(last) ? last : _main.Groups[0];
+        await ScriptCreateAsync(new Node(kind, profile, database, hit.Name, hit.Table));
+        if (_tabs.Count == before) return;   // no se pudo generar el script: ya se mostró el error
+
+        var tab = _tabs[^1].Tab;
+        // Se deja a la vista lo encontrado (en una coincidencia de columna, la columna), con el cursor al final.
+        if (!(hit.Where == SearchHit.InColumn && tab.ShowFirst(hit.Detail.Split(' ')[0]) > 0)) tab.ShowFirst(text);
+        FocusFromOtherWindow(tab);
+    }
+
+    /// <summary>
+    /// Trae la ventana principal al frente con el teclado en el editor de la pestaña, cuando la acción vino de
+    /// otra ventana (búsqueda, historial). Se hace al terminar el clic: si no, la ventana de origen recupera el
+    /// foco al soltar el botón y los atajos del editor (Ctrl+Z...) no llegarían a ninguna parte.
+    /// </summary>
+    private void FocusFromOtherWindow(QueryTab tab) => Dispatcher.BeginInvoke(() =>
+    {
+        Activate();
+        tab.FocusEditor();
+    }, DispatcherPriority.Input);
+
+    // ---------- Historial de consultas ----------
+
+    private HistoryWindow? _historyWindow;
+
+    private void History_Click(object sender, RoutedEventArgs e) => ShowHistory();
+
+    /// <summary>Ventana del historial, única: si ya está abierta se trae al frente con los datos al día.</summary>
+    private void ShowHistory()
+    {
+        if (_historyWindow != null)
+        {
+            _historyWindow.Reload();
+            _historyWindow.Activate();
+            return;
+        }
+        _historyWindow = new HistoryWindow(this, OpenFromHistory);
+        _historyWindow.Closed += (_, _) => _historyWindow = null;
+        _historyWindow.Show();
+    }
+
+    private void HistoryEnabled_Click(object sender, RoutedEventArgs e)
+    {
+        AppSettings.Current.HistoryEnabled = HistoryEnabledItem.IsChecked;
+        try { AppSettings.Current.Save(); } catch { }
+    }
+
+    /// <summary>Marca en el menú el tiempo de conservación elegido.</summary>
+    private void UpdateHistoryMenu()
+    {
+        foreach (var item in new[] { HistorySessionItem, History30Item, History90Item, HistoryForeverItem })
+            item.IsChecked = (string)item.Tag == AppSettings.Current.HistoryRetentionDays.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private void HistoryRetention_Click(object sender, RoutedEventArgs e)
+    {
+        int days = int.Parse((string)((MenuItem)sender).Tag, System.Globalization.CultureInfo.InvariantCulture);
+        int previous = AppSettings.Current.HistoryRetentionDays;
+        int stored = QueryHistory.Load().Count;
+        AppSettings.Current.HistoryRetentionDays = days;
+        int kept = QueryHistory.Load().Count;
+        // Acortar el plazo borra lo que queda fuera: se avisa antes, porque no se puede deshacer.
+        if (kept < stored)
+        {
+            var answer = MessageBox.Show(this,
+                $"Con \"{((string)((MenuItem)sender).Header).Replace("_", "")}\" se borrarán {stored - kept:N0} consultas antiguas del historial. No se puede deshacer.\n\n¿Continuar?",
+                "Historial de consultas", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+            {
+                AppSettings.Current.HistoryRetentionDays = previous;
+                UpdateHistoryMenu();
+                return;
+            }
+        }
+        try { AppSettings.Current.Save(); } catch { }
+        QueryHistory.ApplyRetention(sessionBoundary: false);
+        UpdateHistoryMenu();
+        _historyWindow?.Reload();
+    }
+
+    private void ClearHistory_Click(object sender, RoutedEventArgs e)
+    {
+        int count = QueryHistory.Load().Count;
+        if (count == 0)
+        {
+            MessageBox.Show(this, "El historial ya está vacío.", "Historial de consultas", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var answer = MessageBox.Show(this, $"¿Borrar las {count:N0} consultas del historial? No se puede deshacer.",
+            "Historial de consultas", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes) return;
+        QueryHistory.Clear();
+        _historyWindow?.Reload();
+    }
+
+    /// <summary>
+    /// Abre una consulta del historial en una pestaña nueva: en su conexión si sigue abierta; si no, en la de
+    /// la pestaña actual; y si no hay ninguna, sin conexión (se pedirá al ejecutar).
+    /// </summary>
+    private void OpenFromHistory(HistoryEntry entry)
+    {
+        var current = Current is { IsOffline: false } connected ? connected : null;
+        var own = _databases.Keys.FirstOrDefault(p => p.Name == entry.Connection);
+        var profile = own ?? current?.Profile ?? _databases.Keys.FirstOrDefault() ?? ConnectionProfile.Offline;
+        string? database = own != null ? entry.Database : profile == current?.Profile ? current.CurrentDatabase : null;
+
+        _activeGroup = _main.ActiveGroup is { } last && _main.Groups.Contains(last) ? last : _main.Groups[0];
+        var tab = AddTab(profile, database);
+        tab.SetText(entry.Sql);
+        FocusFromOtherWindow(tab);
     }
 
     private void ProcessMonitor_Click(object sender, RoutedEventArgs e)
@@ -1640,7 +1832,7 @@ public partial class MainWindow : Window
         // Mientras una consulta está en curso solo se puede cancelar; ejecutar y plan vuelven al terminar.
         ExecuteButton.IsEnabled = ExplainButton.IsEnabled = ExecuteMenuItem.IsEnabled = ExplainMenuItem.IsEnabled = tab is { IsRunning: false };
         CancelButton.IsEnabled = CancelMenuItem.IsEnabled = tab is { IsRunning: true };
-        DisconnectButton.IsEnabled = DiagramMenuItem.IsEnabled = _databases.Count > 0;
+        DisconnectButton.IsEnabled = DiagramMenuItem.IsEnabled = SearchDatabaseMenuItem.IsEnabled = _databases.Count > 0;
         UpdateGroupMenu();
         // El tema atenúa el texto de un botón deshabilitado, pero no sus iconos de color: se atenúan aquí.
         foreach (var button in new[] { ExecuteButton, ExplainButton, CancelButton })
@@ -1870,6 +2062,7 @@ public partial class MainWindow : Window
                 if (node.Kind == NodeKind.Database)
                 {
                     Add("Ver diagrama", () => new DiagramWindow(node.Profile, node.Database!, Icon).Show());
+                    Add("Buscar en esta base...", () => SearchDatabase(node.Profile, node.Database!));
                     // Sybase: todavía no (falta probar la generación del script contra un servidor real).
                     if (node.Profile.Kind != DbKind.Sybase)
                     {
@@ -2083,7 +2276,10 @@ public partial class MainWindow : Window
         try
         {
             var columns = await Db.GetColumnsAsync(node.Profile, node.Database!, node.Name!);
-            AddTab(node.Profile, node.Database).SetText(build(columns));
+            var tab = AddTab(node.Profile, node.Database);
+            string script = build(columns);
+            tab.SetText(script.EndsWith('\n') ? script : script + "\n");
+            tab.MoveCaretToEnd();
         }
         catch (Exception ex)
         {
@@ -2242,7 +2438,9 @@ public partial class MainWindow : Window
         try
         {
             string script = await Db.GetCreateScriptAsync(node.Profile, node.Database!, ObjectKind(node.Kind), node.Name!, node.Table);
-            AddTab(node.Profile, node.Database).SetText(script + "\n");
+            var tab = AddTab(node.Profile, node.Database);
+            tab.SetText(script + "\n");
+            tab.MoveCaretToEnd();
         }
         catch (Exception ex)
         {

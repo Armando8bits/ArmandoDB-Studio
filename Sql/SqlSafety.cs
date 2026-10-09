@@ -18,6 +18,45 @@ public static class SqlSafety
     /// <summary>La sentencia sin cadenas ni comentarios, para buscar palabras clave solo en el código.</summary>
     private static string CodeOnly(string sql) => NotCode.Replace(sql, " ");
 
+    private static readonly Regex With = new(@"^\s*WITH\b", RegexOptions.IgnoreCase);
+    // Una expresión de tabla común hasta su paréntesis de apertura: nombre [(columnas)] AS [[NOT] MATERIALIZED] (
+    // El nombre puede faltar: si iba entre comillas o corchetes, CodeOnly ya lo quitó.
+    private static readonly Regex CteHead = new(
+        @"\G\s*(RECURSIVE\b\s*)?[^\s(,]*\s*(\([^()]*\))?\s*AS\b\s*((NOT\s+)?MATERIALIZED\b\s*)?\(", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// La sentencia que de verdad se ejecuta cuando va precedida de expresiones de tabla comunes:
+    /// de "WITH c AS (SELECT ...) DELETE FROM t" devuelve "DELETE FROM t". Lo que hay dentro de las CTE (incluido
+    /// su WHERE) no dice nada de la sentencia principal. Si no empieza por WITH o no se entiende, devuelve lo mismo.
+    /// </summary>
+    private static string MainStatement(string code)
+    {
+        var with = With.Match(code);
+        if (!with.Success) return code;
+
+        int position = with.Length;
+        while (true)
+        {
+            var head = CteHead.Match(code, position);
+            if (!head.Success) return code;
+
+            // Hasta el paréntesis que cierra la consulta de la CTE.
+            int depth = 1;
+            position = head.Index + head.Length;
+            while (position < code.Length && depth > 0)
+            {
+                if (code[position] == '(') depth++;
+                else if (code[position] == ')') depth--;
+                position++;
+            }
+            if (depth > 0) return code;
+
+            while (position < code.Length && char.IsWhiteSpace(code[position])) position++;
+            if (position < code.Length && code[position] == ',') { position++; continue; }
+            return code[position..];
+        }
+    }
+
     /// <summary>
     /// Avisos, uno por sentencia.
     /// <paramref name="dangerous"/>: UPDATE/DELETE sin WHERE, DROP y TRUNCATE, en cualquier conexión.
@@ -31,7 +70,7 @@ public static class SqlSafety
         foreach (var statement in statements)
         {
             string text = statement.Text;
-            string code = CodeOnly(text);
+            string code = MainStatement(CodeOnly(text));
             string? reason =
                 dangerous && UpdateOrDelete.IsMatch(code) && !Where.IsMatch(code) ? "sin WHERE: afecta a TODAS las filas"
                 : dangerous && DropOrTruncate.IsMatch(code) ? "elimina objetos o datos de forma irreversible"

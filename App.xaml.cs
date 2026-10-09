@@ -59,6 +59,8 @@ public partial class App : Application
             // Con el tema por defecto se puede trabajar igual.
             Errors.Show(null, "No se pudo aplicar el tema", ex);
         }
+        // Historial: fuera lo caducado (y todo, si se conserva solo por sesión y la anterior no cerró bien).
+        QueryHistory.ApplyRetention(sessionBoundary: true);
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -66,6 +68,7 @@ public partial class App : Application
         try { SshTunnels.CloseAll(); } catch { }
         // Salida normal: las consultas ya se guardaron o se descartaron a propósito.
         RecoveryStore.Clear();
+        QueryHistory.ApplyRetention(sessionBoundary: true);
         base.OnExit(e);
     }
 }
