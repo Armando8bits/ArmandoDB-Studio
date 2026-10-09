@@ -1272,97 +1272,27 @@ public partial class QueryTab : UserControl
         log.AppendLine(Db.Prompt(Profile.Kind) + FirstLine(sql));
 
         var watch = Stopwatch.StartNew();
-        await using var cmd = _conn!.CreateCommand();
-        cmd.CommandText = sql;
-        cmd.CommandTimeout = 0;
-        var reader = await cmd.ExecuteReaderAsync(token);
-
-        bool anyResultSet = false, truncated = false;
-        try
+        int maxRows = MaxRows;
+        var outcome = await StatementRunner.RunAsync(_conn!, sql, maxRows, results, token, result =>
         {
-            do
-            {
-                if (reader.FieldCount == 0) continue;
-                anyResultSet = true;
+            // Los datos solo se ven en la cuadrícula; aquí queda el registro de lo ocurrido.
+            log.AppendLine($"{result.Rows.Count} filas en el conjunto ({Seconds(watch)})");
+            if (result.Truncated)
+                log.AppendLine($"Aviso: el resultado se truncó a {maxRows} filas. El resto no se leyó, ni los resultados siguientes de esta sentencia.");
+            log.AppendLine();
+        });
 
-                var columns = new string[reader.FieldCount];
-                for (int i = 0; i < columns.Length; i++)
-                    columns[i] = reader.GetName(i);
-
-                var result = new ResultSet { Columns = columns, SourceTable = SingleSourceTable(reader) };
-                while (await reader.ReadAsync(token))
-                {
-                    if (result.Rows.Count >= MaxRows)
-                    {
-                        result.Truncated = truncated = true;
-                        break;
-                    }
-                    var row = new object?[columns.Length];
-                    for (int i = 0; i < row.Length; i++)
-                        row[i] = ReadValue(reader, i);
-                    result.Rows.Add(row);
-                }
-                results.Add(result);
-
-                // Los datos solo se ven en la cuadrícula; aquí queda el registro de lo ocurrido.
-                log.AppendLine($"{result.Rows.Count} filas en el conjunto ({Seconds(watch)})");
-                if (result.Truncated)
-                    log.AppendLine($"Aviso: el resultado se truncó a {MaxRows} filas. El resto no se leyó, ni los resultados siguientes de esta sentencia.");
-                log.AppendLine();
-            } while (!truncated && await reader.NextResultAsync(token));
-
-            if (truncated) return;
-            if (reader.RecordsAffected >= 0)
-                log.AppendLine($"Consulta OK, {reader.RecordsAffected} filas afectadas ({Seconds(watch)})").AppendLine();
-            else if (!anyResultSet)
-                log.AppendLine($"Consulta OK ({Seconds(watch)})").AppendLine();
-        }
-        finally
-        {
-            if (truncated)
-            {
-                // Sin cancelar, cerrar el lector seguiría trayendo del servidor todas las filas que faltan.
-                // Tras cancelar, el propio cierre puede quejarse de que la consulta se interrumpió: es lo esperado.
-                try { cmd.Cancel(); } catch { }
-                try { await reader.DisposeAsync(); } catch { }
-            }
-            else
-            {
-                await reader.DisposeAsync();
-            }
-        }
+        if (outcome.Truncated) return;
+        if (outcome.RecordsAffected >= 0)
+            log.AppendLine($"Consulta OK, {outcome.RecordsAffected} filas afectadas ({Seconds(watch)})").AppendLine();
+        else if (!outcome.AnyResultSet)
+            log.AppendLine($"Consulta OK ({Seconds(watch)})").AppendLine();
     }
 
     private static string Seconds(Stopwatch watch) =>
         watch.Elapsed.TotalSeconds.ToString("0.000", CultureInfo.InvariantCulture) + " s";
 
-    /// <summary>Si todas las columnas del resultado vienen de la misma tabla, su nombre; si no (JOIN, cálculos), null.</summary>
-    private static string? SingleSourceTable(DbDataReader reader)
-    {
-        try
-        {
-            var tables = reader.GetColumnSchema().Select(c => c.BaseTableName).Distinct().ToList();
-            return tables.Count == 1 && !string.IsNullOrEmpty(tables[0]) ? tables[0] : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static object? ReadValue(DbDataReader reader, int index)
-    {
-        try
-        {
-            return reader.IsDBNull(index) ? null : reader.GetValue(index);
-        }
-        catch
-        {
-            // Valores que .NET no puede representar (p. ej. fechas fuera de rango).
-            try { return reader.GetString(index); }
-            catch { return "<valor ilegible>"; }
-        }
-    }
+    private static object? ReadValue(DbDataReader reader, int index) => StatementRunner.ReadValue(reader, index);
 
     private readonly System.Windows.Threading.DispatcherTimer _filterTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
 
@@ -1513,6 +1443,13 @@ public partial class QueryTab : UserControl
 
         grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
         grid.SelectedCellsChanged += (_, _) => UpdateSelectionStats(grid);
+        // Mayús + rueda: desplazamiento horizontal, como en el navegador o en Excel.
+        grid.PreviewMouseWheel += (_, e) =>
+        {
+            if (Keyboard.Modifiers != ModifierKeys.Shift || FindChild<ScrollViewer>(grid) is not { } inner) return;
+            e.Handled = true;
+            inner.ScrollToHorizontalOffset(inner.HorizontalOffset - e.Delta);
+        };
 
         var menu = new ContextMenu();
         menu.Items.Add(MenuItem("Copiar", () => ApplicationCommands.Copy.Execute(null, grid)));
@@ -1661,6 +1598,11 @@ public partial class QueryTab : UserControl
             menu.Items.Add(item);
         }
 
+        // El nombre del campo, para pegarlo en la consulta sin tener que escribirlo.
+        Add("Copiar el nombre de la columna", column => CopyText(column.Header as string ?? ""));
+        Add("Copiar los nombres de todas las columnas", _ =>
+            CopyText(string.Join(", ", grid.Columns.OrderBy(c => c.DisplayIndex).Select(c => c.Header as string ?? ""))));
+        menu.Items.Add(new Separator());
         Add("Ordenar ascendente", column => SortBy(grid, column, ListSortDirection.Ascending));
         Add("Ordenar descendente", column => SortBy(grid, column, ListSortDirection.Descending));
         Add("Quitar el orden", column => SortBy(grid, column, null));
@@ -1668,6 +1610,19 @@ public partial class QueryTab : UserControl
         Add("Seleccionar la columna", column => SelectColumnRange(grid, column.DisplayIndex, 1, add: false));
         MenuIcons.Apply(menu);
         return menu;
+    }
+
+    private void CopyText(string text)
+    {
+        try
+        {
+            Clipboard.SetDataObject(text, copy: true);
+        }
+        catch (Exception ex)
+        {
+            // El portapapeles puede estar ocupado por otra aplicación.
+            Errors.Show(Window.GetWindow(this), "No se pudo copiar al portapapeles", ex);
+        }
     }
 
     private static void SortBy(DataGrid grid, DataGridColumn column, ListSortDirection? direction)

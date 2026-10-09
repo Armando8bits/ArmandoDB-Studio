@@ -16,8 +16,29 @@ If you love hitting **`Ctrl + E`** to instantly execute your selected query (jus
 - **Multi-Engine Support:** Works with **MySQL** (remote VMs, local instances), **SQLite** and **Microsoft SQL Server** (SQL login or Windows authentication, named instances, LocalDB, `GO` batches) databases, plus experimental support for **Sybase ASE**.
 - **Query history:** Every query you run is kept with its connection, duration, row count and result, so you can search it and reopen it later (`Ctrl + H`). The query text is stored unencrypted in the app's data folder on your computer; from the Tools menu you can choose how long it is kept (this session only, 30 days, 90 days by default, or no time limit), turn it off or clear it.
 - **Search the database:** Find a text in table, view, procedure, function and trigger names, in column names and inside the code of views, routines and triggers, and jump to the object's script (`Ctrl + Shift + B`).
+- **Command line (`armandodb.exe`):** Run a query against any connection saved in the app, SSH tunnel included, and get the result as JSON, CSV or a text table. Made for scripts and AI agents; see [Command line](#command-line) below.
 - **Zero Bloat / Zero Ads:** Open-source, lightweight, no telemetry, no "upgrade to Pro" nags.
 - **Customized UI:** Built by a developer, for developers, focusing purely on productivity and speed.
+
+## Command line
+
+`armandodb.exe` is installed next to `ArmandoDBStudio.exe`. It uses the connections you saved in the app (by name), opens their SSH tunnel when they have one, and never opens a window or asks a question. Commands and options are in Spanish, with English aliases.
+
+```
+armandodb connections
+armandodb query --connection "Shop" --sql "SELECT id, name FROM customer LIMIT 10"
+armandodb query --connection "Shop" --database sales --file report.sql --format csv > report.csv
+```
+
+- **Output:** `--format json` (default), `csv` or `table`. Errors go to standard error. Exit codes: `0` ok, `1` wrong usage, `2` could not connect, `3` query rejected, `4` query error.
+- **Read-only by default:** anything that is not clearly a read (`SELECT`, `SHOW`, `EXPLAIN`...) is rejected unless you add `--allow-write`. On connections marked as production, writing is never allowed from the command line.
+- **This check is a safety net, not a guarantee.** For an agent or a script against a real server, use a connection whose database account only has `SELECT` permission.
+- **Row cap:** 1,000 rows per result by default (`--max-rows`).
+- **Passwords:** the ones saved with the connection are used; otherwise they are read from the `ARMANDODB_PASSWORD` and `ARMANDODB_SSH_PASSWORD` environment variables.
+- **History:** what it runs is recorded in the app's query history, marked as `CLI`.
+- **Session mode:** `armandodb session --connection "Shop"` keeps the connection and its SSH tunnel open and answers each query it receives on standard input (one JSON line per query, one JSON line per answer), until it is told to quit or has been idle for 10 minutes. Use it when an agent runs many queries in a row.
+
+`query` opens the connection, runs and closes on every call; `session` opens it once. The full reference (protocol, output formats, examples, limitations) is in [CLI.md](CLI.md), in Spanish. Run `armandodb help` for a summary.
 
 ## Known limitations
 - **Windows only.** The installer is not code-signed, so Windows SmartScreen shows a warning the first time you run it.
@@ -53,8 +74,29 @@ Si te encanta presionar **`Ctrl + E`** para ejecutar al instante tu consulta sel
 - **Soporte Multi-motor:** Funciona con bases de datos **MySQL** (en VMs remotas, servidores locales), **SQLite** y **Microsoft SQL Server** (usuario de SQL o autenticación de Windows, instancias con nombre, LocalDB, lotes `GO`), más soporte experimental para **Sybase ASE**.
 - **Historial de consultas:** Cada consulta que ejecutas se guarda con su conexión, duración, filas y resultado, para buscarla y reabrirla después (`Ctrl + H`). El texto de las consultas se guarda sin cifrar en la carpeta de datos de la aplicación, en tu equipo; desde el menú Herramientas se elige cuánto se conserva (solo esta sesión, 30 días, 90 días por defecto o sin límite de tiempo), y se puede desactivar o borrar.
 - **Buscar en la base de datos:** Encuentra un texto en los nombres de tablas, vistas, procedimientos, funciones y triggers, en los nombres de columna y dentro del código de vistas, rutinas y triggers, y salta al script del objeto (`Ctrl + Mayús + B`).
+- **Línea de comandos (`armandodb.exe`):** Ejecuta una consulta contra cualquier conexión guardada en la aplicación, túnel SSH incluido, y devuelve el resultado en JSON, CSV o tabla de texto. Pensado para scripts y agentes de IA; ver [Línea de comandos](#línea-de-comandos) más abajo.
 - **Cero peso innecesario / Cero publicidad:** Código abierto, ligero, sin telemetría ni anuncios de "actualizar a Pro".
 - **Interfaz a medida:** Creado por un desarrollador para desarrolladores, enfocado 100% en la productividad y la velocidad.
+
+## Línea de comandos
+
+`armandodb.exe` se instala junto a `ArmandoDBStudio.exe`. Usa las conexiones guardadas en la aplicación (por su nombre), abre su túnel SSH si lo tienen y nunca abre una ventana ni hace preguntas.
+
+```
+armandodb conexiones
+armandodb consulta --conexion "Tienda" --sql "SELECT id, nombre FROM cliente LIMIT 10"
+armandodb consulta --conexion "Tienda" --base ventas --archivo informe.sql --formato csv > informe.csv
+```
+
+- **Salida:** `--formato json` (por defecto), `csv` o `tabla`. Los errores van por la salida de error. Códigos de salida: `0` correcto, `1` uso incorrecto, `2` no se pudo conectar, `3` consulta rechazada, `4` error de la consulta.
+- **Solo lectura por defecto:** se rechaza todo lo que no sea claramente una lectura (`SELECT`, `SHOW`, `EXPLAIN`...) salvo que añadas `--permitir-escritura`. En las conexiones marcadas como producción no se permite escribir desde la línea de comandos en ningún caso.
+- **Esa comprobación es una red de seguridad, no una garantía.** Para un agente o un script contra un servidor real, usa una conexión cuya cuenta de base de datos solo tenga permiso `SELECT`.
+- **Tope de filas:** 1.000 por resultado por defecto (`--max-filas`).
+- **Contraseñas:** se usan las guardadas con la conexión; si no lo están, se leen de las variables de entorno `ARMANDODB_PASSWORD` y `ARMANDODB_SSH_PASSWORD`.
+- **Historial:** lo que ejecuta queda en el historial de consultas de la aplicación, marcado como `CLI`.
+- **Modo sesión:** `armandodb sesion --conexion "Tienda"` deja abierta la conexión y su túnel SSH y responde a cada consulta que recibe por la entrada estándar (una línea JSON por consulta, una línea JSON por respuesta), hasta que se le pide salir o lleva 10 minutos sin actividad. Es para cuando un agente hace muchas consultas seguidas.
+
+`consulta` abre la conexión, ejecuta y cierra en cada llamada; `sesion` la abre una sola vez. La referencia completa (protocolo, formatos de salida, ejemplos, limitaciones) está en [CLI.md](CLI.md). `armandodb ayuda` muestra un resumen.
 
 ## Limitaciones conocidas
 - **Solo Windows.** El instalador no está firmado, así que Windows SmartScreen muestra un aviso la primera vez que se ejecuta.

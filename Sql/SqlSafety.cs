@@ -57,6 +57,44 @@ public static class SqlSafety
         }
     }
 
+    // ---------- Solo lectura (modo de línea de comandos) ----------
+
+    // Con qué puede empezar una sentencia que solo lee. Lista cerrada: lo que no está aquí, se rechaza.
+    private static readonly Regex ReadStart = new(@"^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN|USE|VALUES)\b", RegexOptions.IgnoreCase);
+    // En Transact-SQL, además, lo que solo afecta a la sesión o controla el flujo del lote.
+    private static readonly Regex TSqlReadStart = new(@"^\s*(SELECT|WITH|USE|DECLARE|SET|PRINT|IF|WHILE|BEGIN|RETURN)\b", RegexOptions.IgnoreCase);
+    // SHOW CREATE TABLE y similares mencionan palabras de escritura sin escribir nada.
+    private static readonly Regex Describes = new(@"^\s*(SHOW|DESCRIBE|DESC)\b", RegexOptions.IgnoreCase);
+    // Palabras que delatan una escritura en cualquier punto: "IF ... DELETE", "SELECT ... INTO tabla", bloqueos de filas.
+    private static readonly Regex WriteAnywhere = new(
+        @"\b(INSERT|UPDATE|DELETE|MERGE|REPLACE\s+INTO|EXEC|EXECUTE|CALL|DROP|TRUNCATE|ALTER|CREATE|RENAME|GRANT|REVOKE|INTO|" +
+        @"BACKUP|RESTORE|KILL|SHUTDOWN|DBCC|WRITETEXT|UPDATETEXT|LOAD\s+DATA|LOCK\s+(TABLES?|IN)|HANDLER)\b", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Sentencias que no son claramente de solo lectura, una línea por cada una; vacío si todo el script solo lee.
+    /// Al revés que <see cref="Review"/>, aquí se admite solo lo conocido (SELECT, SHOW, EXPLAIN...) y se rechaza
+    /// el resto. Es una red de seguridad, no una garantía: una función llamada desde un SELECT puede escribir.
+    /// La protección real es que la cuenta de la base de datos solo tenga permiso de lectura.
+    /// </summary>
+    public static List<string> ReadOnlyViolations(IEnumerable<SqlStatement> statements, DbKind kind)
+    {
+        bool tsql = Db.IsTSql(kind);
+        var violations = new List<string>();
+        foreach (var statement in statements)
+        {
+            string code = CodeOnly(statement.Text);
+            string main = MainStatement(code);
+            bool reads = (tsql ? TSqlReadStart : ReadStart).IsMatch(main)
+                && (Describes.IsMatch(main) || !WriteAnywhere.IsMatch(code));
+            if (reads) continue;
+
+            string first = statement.Text.Trim().Split('\n')[0].Trim();
+            if (first.Length > 80) first = first[..77] + "...";
+            violations.Add($"Línea {statement.Line}: {first}");
+        }
+        return violations;
+    }
+
     /// <summary>
     /// Avisos, uno por sentencia.
     /// <paramref name="dangerous"/>: UPDATE/DELETE sin WHERE, DROP y TRUNCATE, en cualquier conexión.

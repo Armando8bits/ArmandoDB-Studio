@@ -3,7 +3,7 @@
   <!--
     Comandos habituales (desde la carpeta del proyecto, C:\miscreaciones\MySmdb):
 
-    Compilar (cierra antes la aplicación si está abierta; si no, el .exe queda bloqueado):
+    Compilar solo app (cierra antes la aplicación si está abierta; si no, el .exe queda bloqueado):
         dotnet build -c Release
 
     Ejecutar el .exe ya compilado:
@@ -14,6 +14,13 @@
 
     Ejecutar las pruebas automáticas (no hace falta cerrar la aplicación):
         dotnet test tests\MySmdb.Tests
+
+    *Compilar línea de comandos y APP (armandodb.exe; su código está en Cli\CliRunner.cs y su manual en CLI.md):
+        dotnet build armandodb-cli -c Release
+
+    *Compilar y probar la línea de comandos (armandodb.exe; su código está en Cli\CliRunner.cs y su manual en CLI.md):
+        dotnet build armandodb-cli
+        .\armandodb-cli\bin\Debug\net10.0-windows\armandodb.exe ayuda
 
     Generar el instalador, uno de los dos es suficiente (Setup.exe con .NET incluido, para equipos sin .NET; requiere Inno Setup 6):
         .\installer\build-installer.ps1
@@ -31,8 +38,8 @@
     <RootNamespace>MySmdb</RootNamespace>
     <AssemblyName>ArmandoDBStudio</AssemblyName>
     <Version>1.0.0</Version>
-    <!-- Las pruebas son otro proyecto (tests\MySmdb.Tests): sus archivos no se compilan con la aplicación. -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**</DefaultItemExcludes>
+    <!-- Las pruebas (tests\MySmdb.Tests) y el arranque de consola (armandodb-cli) son otros proyectos: sus archivos no se compilan con la aplicación. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests\**;armandodb-cli\**</DefaultItemExcludes>
     <Product>ArmandoDB Studio</Product>
     <AssemblyTitle>ArmandoDB Studio</AssemblyTitle>
     <Company>ArmandoDB Studio</Company>

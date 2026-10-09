@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    armandodb.exe: el modo de línea de comandos de ArmandoDB Studio.
+    Es solo el arranque de consola; todo lo que hace está en ..\Cli\CliRunner.cs, dentro del proyecto de la
+    aplicación, para compartir su código (conexiones guardadas, túnel SSH, ejecución, exportación).
+
+    Para probarlo sin instalar, compílalo con "dotnet build armandodb-cli" y ejecuta
+    armandodb-cli\bin\Debug\net10.0-windows\armandodb.exe (los ejemplos de uso salen con "armandodb ayuda").
+
+    El instalador lo publica en la misma carpeta que ArmandoDBStudio.exe (ver installer\build-installer.ps1).
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- La aplicación a la que llama es WPF: hace falta el mismo entorno de ejecución, aunque aquí no se abra ninguna ventana. -->
+    <UseWPF>true</UseWPF>
+    <AssemblyName>armandodb</AssemblyName>
+    <RootNamespace>MySmdb.Cli</RootNamespace>
+    <Product>ArmandoDB Studio</Product>
+    <AssemblyTitle>ArmandoDB Studio (línea de comandos)</AssemblyTitle>
+    <ApplicationIcon>..\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MySmdb.csproj" />
+  </ItemGroup>
+
+</Project>

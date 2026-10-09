@@ -72,7 +72,7 @@ public class HistoryWindow : Window
             Width = fill ? new DataGridLength(1, DataGridLengthUnitType.Star) : new DataGridLength(width),
         });
         Column("Fecha", nameof(HistoryEntry.WhenText), 135);
-        Column("Conexión", nameof(HistoryEntry.Connection), 150);
+        Column("Conexión", nameof(HistoryEntry.ConnectionText), 150);
         Column("Base", nameof(HistoryEntry.Database), 110);
         Column("Segundos", nameof(HistoryEntry.SecondsText), 70);
         Column("Filas", nameof(HistoryEntry.RowsText), 70);

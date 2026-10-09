@@ -11,6 +11,12 @@ public sealed record HistoryEntry(DateTime When, string Connection, string? Data
 {
     public const string Ok = "Correcta", Failed = "Con errores", Cancelled = "Cancelada";
 
+    /// <summary>De dónde salió, si no fue de una pestaña: "CLI" para la línea de comandos.</summary>
+    public string? Source { get; init; }
+
+    /// <summary>La conexión, señalando lo que no ejecutó una persona desde la ventana.</summary>
+    [JsonIgnore] public string ConnectionText => Source == null ? Connection : $"{Connection} · {Source}";
+
     // Lo que muestra la ventana del historial.
     [JsonIgnore] public string WhenText => When.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
     [JsonIgnore] public string SecondsText => Seconds.ToString("0.000", CultureInfo.InvariantCulture);

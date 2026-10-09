@@ -161,6 +161,91 @@ public class SqlSafetyTests
         Assert.Contains(Review(sql, DbKind.SqlServer), w => w.Contains("sin WHERE"));
     }
 
+    /// <summary>Lo que rechazaría el modo de línea de comandos por no ser de solo lectura.</summary>
+    private static List<string> NotReadOnly(string script, DbKind kind = DbKind.MySql)
+    {
+        var statements = SqlSplitter.Split(script, kind);
+        var toReview = Db.IsTSql(kind) ? statements.SelectMany(SqlSplitter.SplitTSqlForReview).ToList() : statements;
+        return SqlSafety.ReadOnlyViolations(toReview, kind);
+    }
+
+    [Theory]
+    [InlineData("SELECT * FROM t WHERE id = 1;")]
+    [InlineData("select count(*) from t")]
+    [InlineData("WITH c AS (SELECT id FROM t) SELECT * FROM c;")]
+    [InlineData("SHOW TABLES; SHOW CREATE TABLE t; DESCRIBE t; DESC t;")]
+    [InlineData("EXPLAIN SELECT * FROM t;")]
+    [InlineData("USE ventas; SELECT 1;")]
+    [InlineData("SELECT 'delete from t' AS texto, `update`, last_update, created_at FROM t;")]
+    [InlineData("SELECT REPLACE(nombre, 'a', 'b') FROM t -- drop table t")]
+    [InlineData("SELECT * FROM t /* insert into x */ WHERE nota = 'call me'")]
+    public void Las_lecturas_son_de_solo_lectura(string sql)
+    {
+        Assert.Empty(NotReadOnly(sql));
+    }
+
+    [Theory]
+    [InlineData("INSERT INTO t VALUES (1)")]
+    [InlineData("UPDATE t SET a = 1 WHERE id = 2")]
+    [InlineData("DELETE FROM t WHERE id = 2")]
+    [InlineData("REPLACE INTO t VALUES (1)")]
+    [InlineData("DROP TABLE t")]
+    [InlineData("TRUNCATE TABLE t")]
+    [InlineData("CREATE TABLE x (id INT)")]
+    [InlineData("ALTER TABLE t ADD c INT")]
+    [InlineData("CALL procedimiento()")]
+    [InlineData("GRANT ALL ON *.* TO 'x'@'%'")]
+    [InlineData("SET GLOBAL max_connections = 1")]
+    [InlineData("KILL 12")]
+    [InlineData("WITH c AS (SELECT 1) DELETE FROM t")]
+    [InlineData("SELECT * FROM t INTO OUTFILE '/tmp/x'")]
+    [InlineData("SELECT * FROM t FOR UPDATE")]
+    [InlineData("SELECT * FROM t LOCK IN SHARE MODE")]
+    [InlineData("LOAD DATA INFILE 'x' INTO TABLE t")]
+    [InlineData("PRAGMA writable_schema = 1")]
+    [InlineData("algo que no se reconoce")]
+    public void Lo_que_escribe_o_no_se_reconoce_no_es_de_solo_lectura(string sql)
+    {
+        Assert.Single(NotReadOnly(sql));
+    }
+
+    [Fact]
+    public void En_un_script_se_senala_cada_sentencia_que_escribe_con_su_linea()
+    {
+        var found = NotReadOnly("SELECT 1;\nDELETE FROM a;\nSELECT 2;\nDROP TABLE b;");
+        Assert.Equal(new[] { "Línea 2: DELETE FROM a", "Línea 4: DROP TABLE b" }, found);
+    }
+
+    [Theory]
+    [InlineData("select top 10 * from cuenta where id = 1")]
+    [InlineData("declare @n int\nset @n = 5\nselect @n\nprint 'listo'")]
+    [InlineData("WITH c AS (\n    SELECT id FROM t\n)\nSELECT * FROM c")]
+    [InlineData("if exists (select 1 from t) select 'hay' else select 'no hay'")]
+    [InlineData("use ventas\nGO\nselect db_name()")]
+    [InlineData("select [update], [delete] from [insert]")]
+    public void TSql_las_lecturas_son_de_solo_lectura(string sql)
+    {
+        Assert.Empty(NotReadOnly(sql, DbKind.SqlServer));
+        Assert.Empty(NotReadOnly(sql, DbKind.Sybase));
+    }
+
+    [Theory]
+    [InlineData("exec sp_who")]
+    [InlineData("sp_help cuenta")]                                      // ejecución implícita al empezar el lote
+    [InlineData("declare @rc int\nexec @rc = base..proc @a = 1")]
+    [InlineData("select name into #copia from sysobjects")]
+    [InlineData("if 1 = 1 delete from cuenta")]
+    [InlineData("select 1\nupdate cuenta set saldo = 0")]
+    [InlineData(";WITH c AS (SELECT id FROM t) DELETE FROM c")]
+    [InlineData("dbcc checkdb")]
+    [InlineData("backup database ventas to disk = 'x'")]
+    [InlineData("shutdown")]
+    public void TSql_lo_que_escribe_o_ejecuta_no_es_de_solo_lectura(string sql)
+    {
+        Assert.NotEmpty(NotReadOnly(sql, DbKind.SqlServer));
+        Assert.NotEmpty(NotReadOnly(sql, DbKind.Sybase));
+    }
+
     [Fact]
     public void Un_aviso_por_sentencia()
     {

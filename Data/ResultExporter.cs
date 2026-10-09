@@ -44,11 +44,19 @@ public static class ResultExporter
     /// Texto de un valor para un archivo. Como en pantalla, salvo los binarios: en la cuadrícula se abrevian,
     /// pero en un archivo van completos.
     /// </summary>
-    private static string Text(object value) => value is byte[] bytes ? "0x" + Convert.ToHexString(bytes) : CellText.Format(value);
+    public static string Text(object value) => value is byte[] bytes ? "0x" + Convert.ToHexString(bytes) : CellText.Format(value);
 
     // ---------- CSV / TXT ----------
 
     private static void WriteDelimited(string path, string[] columns, IReadOnlyList<object?[]> rows, bool csv, Action<int> step)
+    {
+        // Con BOM, para que Excel reconozca los acentos.
+        using var writer = new StreamWriter(path, false, new UTF8Encoding(true));
+        WriteDelimited(writer, columns, rows, csv, step);
+    }
+
+    /// <summary>CSV (o texto separado por tabuladores) a cualquier destino: un archivo o la salida de la consola.</summary>
+    public static void WriteDelimited(TextWriter writer, string[] columns, IReadOnlyList<object?[]> rows, bool csv, Action<int>? step = null)
     {
         string separator = csv ? "," : "\t";
         string Field(object? value)
@@ -62,12 +70,10 @@ public static class ResultExporter
             return value == null ? "NULL" : Text(value).Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
         }
 
-        // Con BOM, para que Excel reconozca los acentos.
-        using var writer = new StreamWriter(path, false, new UTF8Encoding(true));
         writer.WriteLine(string.Join(separator, columns.Select(c => Field(c))));
         for (int i = 0; i < rows.Count; i++)
         {
-            step(i);
+            step?.Invoke(i);
             writer.WriteLine(string.Join(separator, rows[i].Select(Field)));
         }
     }
@@ -245,6 +251,20 @@ public static class ResultExporter
     /// <summary>Lista de objetos { "columna": valor }. Los nombres repetidos se numeran (id, id_2).</summary>
     private static void WriteJson(string path, string[] columns, IReadOnlyList<object?[]> rows, Action<int> step)
     {
+        using var file = new FileStream(path, FileMode.Create, FileAccess.Write);
+        using var json = new Utf8JsonWriter(file, JsonOptions);
+        WriteJsonRows(json, columns, rows, step);
+    }
+
+    public static readonly JsonWriterOptions JsonOptions = new()
+    {
+        Indented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,   // acentos legibles
+    };
+
+    /// <summary>Las filas como lista de objetos, dentro de un JSON que ya se está escribiendo (un archivo o la consola).</summary>
+    public static void WriteJsonRows(Utf8JsonWriter json, string[] columns, IReadOnlyList<object?[]> rows, Action<int>? step = null)
+    {
         var names = new string[columns.Length];
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < columns.Length; i++)
@@ -254,16 +274,10 @@ public static class ResultExporter
             names[i] = name;
         }
 
-        using var file = new FileStream(path, FileMode.Create, FileAccess.Write);
-        using var json = new Utf8JsonWriter(file, new JsonWriterOptions
-        {
-            Indented = true,
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,   // acentos legibles
-        });
         json.WriteStartArray();
         for (int r = 0; r < rows.Count; r++)
         {
-            step(r);
+            step?.Invoke(r);
             json.WriteStartObject();
             var row = rows[r];
             for (int c = 0; c < names.Length && c < row.Length; c++)

@@ -21,6 +21,10 @@ if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
 dotnet publish (Join-Path $project 'MySmdb.csproj') -c Release -r win-x64 --self-contained true -o $publish -p:DebugType=none -p:DebugSymbols=false --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw 'Falló la publicación.' }
 
+# armandodb.exe (línea de comandos) va en la misma carpeta: comparte todas las bibliotecas de la aplicación.
+dotnet publish (Join-Path $project 'armandodb-cli\armandodb.csproj') -c Release -r win-x64 --self-contained true -o $publish -p:DebugType=none -p:DebugSymbols=false --nologo -v q
+if ($LASTEXITCODE -ne 0) { throw 'Falló la publicación de armandodb.exe.' }
+
 Write-Host 'Creando el instalador...'
 & $iscc /Q (Join-Path $PSScriptRoot 'ArmandoDBStudio.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Inno Setup devolvió un error.' }
