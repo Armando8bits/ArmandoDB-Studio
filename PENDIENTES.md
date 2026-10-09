@@ -55,7 +55,7 @@ Orden recomendado para la primera prueba: conexión marcada como **Producción**
 - [x] Probarla contra **MySQL con túnel SSH**: probada el 2026-10-09 con la conexión de monitor, solo con `SELECT`. `consulta` tarda unos 3 s por llamada; en `sesion`, abrir tarda 2,6 s y cada consulta entre 0,1 y 0,3 s, todas por la misma conexión. Al salir no queda ninguna conexión abierta en el servidor.
 - [x] En esa prueba, un intento de abrir la sesión falló por un problema de red (tiempo de espera del SSH, 15 s) y el siguiente funcionó. **Decidido: no se reintenta de forma automática.** El programa devuelve el error (código 2) y es el agente o el usuario quien decide si insiste.
 - [ ] Usarla con una cuenta de solo lectura (`SELECT`) cuando la maneje un agente: la comprobación de solo lectura del programa es una red de seguridad, no una garantía.
-- [ ] El instalador no añade la carpeta al `PATH`: hay que llamarla con su ruta completa o añadirla a mano.
+- [ ] El instalador añade la carpeta al `PATH` (casilla marcada por defecto) y la quita al desinstalar. El script compila, pero **falta probarlo instalando**: que `armandodb` responda en una terminal nueva, que una reinstalación no duplique la entrada y que desinstalar la quite sin tocar el resto del `PATH`.
 - [ ] No hay comandos para explorar (listar bases, tablas o columnas): se hace con consultas al catálogo.
 - [ ] Modo sesión: la reconexión tras caerse la conexión o el túnel está escrita pero no probada (no se pudo provocar la caída en una prueba).
 - [ ] Modo sesión: no se puede cancelar una consulta en curso sin terminar el proceso.

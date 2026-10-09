@@ -34,7 +34,7 @@ El resultado queda en `installer\Output\ArmandoDBStudio-Setup-<versión>.exe`.
 
 ## 3. Comprobar el instalador
 
-Instalarlo en el equipo, abrir la aplicación, conectar a una base y ejecutar una consulta. Si es posible, probarlo también en otro equipo que no tenga .NET instalado.
+Instalarlo en el equipo, abrir la aplicación, conectar a una base y ejecutar una consulta. Abrir una terminal nueva y comprobar que `armandodb conexiones` responde (el instalador añade la carpeta al `PATH`). Si es posible, probarlo también en otro equipo que no tenga .NET instalado.
 
 ## 4. Crear el release en GitHub
 

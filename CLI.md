@@ -9,7 +9,11 @@
 
 ## Dónde está
 
-Se instala en la misma carpeta que `ArmandoDBStudio.exe`. El instalador no la añade al `PATH`: se llama con su ruta completa o se añade esa carpeta al `PATH` a mano.
+Se instala en la misma carpeta que `ArmandoDBStudio.exe`. El instalador ofrece la casilla **"Añadir armandodb al PATH"**, marcada por defecto: con ella, el comando `armandodb` funciona desde cualquier terminal, script o agente sin escribir su ruta. Al desinstalar, la carpeta se quita del `PATH`.
+
+Las terminales y los programas que ya estaban abiertos al instalar no ven el cambio: hay que cerrarlos y volver a abrirlos.
+
+Si desmarcaste la casilla, se llama con su ruta completa (normalmente `%LOCALAPPDATA%\Programs\ArmandoDB Studio\armandodb.exe`).
 
 Para probarla desde el código fuente:
 
