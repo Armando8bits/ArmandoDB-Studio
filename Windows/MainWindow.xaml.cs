@@ -122,6 +122,7 @@ public partial class MainWindow : Window
         DockMenuItem.Icon = ExplorerIcons.Create(ExplorerIcon.DockBack);
         // El resto de opciones del menú principal toman su icono por el texto (ver MenuIcons).
         MenuIcons.Apply(MainMenu);
+        EnableExplorerDrag();
         HistoryEnabledItem.IsChecked = AppSettings.Current.HistoryEnabled;
         UpdateHistoryMenu();
         SnippetsEnabledItem.IsChecked = AppSettings.Current.SnippetsEnabled;
@@ -2037,6 +2038,56 @@ public partial class MainWindow : Window
 
     // ---------- Explorador de objetos ----------
 
+    /// <summary>Elemento del explorador que no es un Node (una columna) pero se puede arrastrar al editor.</summary>
+    private sealed record DraggableName(string Text);
+
+    private Point _explorerDragStart;
+    private string? _explorerDragText;
+
+    /// <summary>
+    /// Arrastrar un elemento del explorador al editor escribe su nombre. El editor mueve su cursor siguiendo al
+    /// ratón mientras se arrastra, así que el nombre queda justo donde se suelta.
+    /// </summary>
+    private void EnableExplorerDrag()
+    {
+        Explorer.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            _explorerDragText = null;
+            // El triángulo de desplegar no inicia un arrastre.
+            for (var element = e.OriginalSource as DependencyObject; element != null && element != Explorer; element = VisualTreeHelper.GetParent(element))
+            {
+                if (element is System.Windows.Controls.Primitives.ToggleButton) return;
+                if (element is not TreeViewItem item) continue;
+                _explorerDragText = item.Tag switch
+                {
+                    DraggableName column => column.Text,
+                    Node { Kind: NodeKind.Database, Database: { } database } node => ExplorerDrag.Text(node.Profile.Kind, database, qualified: false),
+                    Node { Kind: NodeKind.Table or NodeKind.View or NodeKind.Procedure or NodeKind.Function or NodeKind.Trigger, Name: { } name } node
+                        => ExplorerDrag.Text(node.Profile.Kind, name, qualified: Db.IsTSql(node.Profile.Kind)),
+                    Node { Kind: NodeKind.Index, Name: { } name } node => ExplorerDrag.Text(node.Profile.Kind, name, qualified: false),
+                    _ => null,   // la conexión, las carpetas y "Cargando..." no tienen un nombre que escribir
+                };
+                _explorerDragStart = e.GetPosition(Explorer);
+                return;
+            }
+        };
+        Explorer.PreviewMouseMove += (_, e) =>
+        {
+            if (_explorerDragText is not { } text) return;
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                _explorerDragText = null;
+                return;
+            }
+            var delta = e.GetPosition(Explorer) - _explorerDragStart;
+            if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+
+            _explorerDragText = null;
+            DragDrop.DoDragDrop(Explorer, ExplorerDrag.Data(text), DragDropEffects.Copy);
+        };
+    }
+
     private TreeViewItem MakeNode(string header, Node node, bool expandable)
     {
         var icon = node.Kind switch
@@ -2388,6 +2439,8 @@ public partial class MainWindow : Window
                         var columnItem = new TreeViewItem
                         {
                             Header = ExplorerIcons.Header(column.PrimaryKey ? ExplorerIcon.KeyColumn : ExplorerIcon.Column, column.ToString()),
+                            // Lo que se escribe al arrastrarla al editor: solo el nombre, sin el tipo.
+                            Tag = new DraggableName(ExplorerDrag.Text(node.Profile.Kind, column.Name, qualified: false)),
                         };
                         columnItem.SetResourceReference(ForegroundProperty, "Brush.SecondaryText");
                         children.Add(columnItem);

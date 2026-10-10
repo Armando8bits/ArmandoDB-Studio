@@ -206,6 +206,18 @@ public partial class QueryTab : UserControl
                      && (char.IsLetter(e.Text[0]) || e.Text[0] == '_'))
                 ShowCompletion(forced: false);
         };
+        // Al soltar un nombre arrastrado desde el explorador, el editor ya lo insertó donde estaba el ratón, pero lo
+        // deja seleccionado: se quita la selección (lo siguiente que se escriba no debe sustituirlo), el cursor
+        // queda detrás del nombre y el teclado pasa al editor. Se registra para ejecutarse después del editor.
+        Editor.TextArea.AddHandler(DragDrop.DropEvent, new DragEventHandler((_, e) =>
+        {
+            if (!e.Data.GetDataPresent(ExplorerDrag.Format)) return;
+            int end = Editor.SelectionStart + Editor.SelectionLength;
+            Editor.SelectionLength = 0;
+            Editor.CaretOffset = Math.Min(end, Editor.Document.TextLength);
+            Window.GetWindow(this)?.Activate();
+            Editor.Focus();
+        }), handledEventsToo: true);
         Editor.TextChanged += (_, _) =>
         {
             // Con varias vistas el aviso llega a todas; la primera marca el script y las demás ya lo ven marcado.
@@ -1443,6 +1455,23 @@ public partial class QueryTab : UserControl
 
         grid.LoadingRow += (_, e) => e.Row.Header = (e.Row.GetIndex() + 1).ToString();
         grid.SelectedCellsChanged += (_, _) => UpdateSelectionStats(grid);
+        // Copiar: la cuadrícula de WPF termina cada fila con un salto de línea, también la última, así que al pegar
+        // una sola celda aparecía un salto de más. Se recogen las filas tal como las copia y se deja en el
+        // portapapeles el mismo texto sin ese salto final (celdas separadas por tabuladores, filas por saltos).
+        var copiedRows = new List<string>();
+        grid.CopyingRowClipboardContent += (_, e) =>
+            copiedRows.Add(string.Join("\t", e.ClipboardRowContent.Select(cell => cell.Content?.ToString() ?? "")));
+        grid.AddHandler(CommandManager.PreviewExecutedEvent, new ExecutedRoutedEventHandler((_, e) =>
+        {
+            if (e.Command == ApplicationCommands.Copy) copiedRows.Clear();
+        }), handledEventsToo: true);
+        grid.AddHandler(CommandManager.ExecutedEvent, new ExecutedRoutedEventHandler((_, e) =>
+        {
+            if (e.Command != ApplicationCommands.Copy || copiedRows.Count == 0) return;
+            string text = string.Join("\r\n", copiedRows);
+            copiedRows.Clear();
+            CopyText(text);
+        }), handledEventsToo: true);
         // Mayús + rueda: desplazamiento horizontal, como en el navegador o en Excel.
         grid.PreviewMouseWheel += (_, e) =>
         {
