@@ -752,7 +752,7 @@ public partial class QueryTab : UserControl
 
         var results = new List<ResultSet>();
         var log = new StringBuilder();
-        bool failed = false, cancelled = false;
+        bool failed = false, cancelled = false, opened = false, transportFailed = false;
         string? database = CurrentDatabase;
         // Para el historial: lo que se ejecuta (la selección o todo), dónde y el primer error.
         string executed = Editor.SelectionLength > 0 ? Editor.SelectedText : Editor.Text;
@@ -763,7 +763,8 @@ public partial class QueryTab : UserControl
         {
             await Task.Run(async () =>
             {
-                await EnsureOpenAsync(token);
+                if (await EnsureOpenAsync(token)) log.AppendLine(ReconnectedNotice).AppendLine();
+                opened = true;
                 _serverMessages = log;   // PRINT y avisos de SQL Server van al registro, en su orden
                 try
                 {
@@ -802,14 +803,23 @@ public partial class QueryTab : UserControl
         }
         catch (Exception ex)
         {
+            // No es un error de la consulta: falló abrir la conexión o se cortó a mitad.
             firstError = "Error: " + ex.Message.ReplaceLineEndings(" ");
             log.AppendLine(firstError);
-            failed = true;
+            failed = transportFailed = true;
         }
 
         watch.Stop();
         _cts.Dispose();
         _cts = null;
+        _lastUsed = Environment.TickCount64;
+        // Si el fallo dejó la conexión inservible (se cortó a mitad), se suelta: la próxima ejecución abre otra,
+        // sin tener que desconectar y volver a conectar a mano.
+        if (failed && !cancelled && (transportFailed || _conn?.State != System.Data.ConnectionState.Open))
+        {
+            DropConnection();
+            if (opened) log.AppendLine("La conexión se perdió. Vuelve a ejecutar: se abrirá de nuevo automáticamente.");
+        }
 
         QueryHistory.Add(new HistoryEntry(DateTime.Now, Profile.Name, startDatabase, executed.Trim(), watch.Elapsed.TotalSeconds,
             cancelled ? null : results.Sum(r => r.Rows.Count),
@@ -891,7 +901,7 @@ public partial class QueryTab : UserControl
         {
             await Task.Run(async () =>
             {
-                await EnsureOpenAsync(token);
+                if (await EnsureOpenAsync(token)) output.AppendLine("-- " + ReconnectedNotice).AppendLine();
                 foreach (var statement in statements)
                 {
                     token.ThrowIfCancellationRequested();
@@ -928,11 +938,14 @@ public partial class QueryTab : UserControl
         {
             output.AppendLine("Error: " + ex.Message.ReplaceLineEndings(" "));
             failed = true;
+            DropConnection();   // falló abrirla o se cortó: la próxima vez se abre otra
         }
 
         watch.Stop();
         _cts.Dispose();
         _cts = null;
+        _lastUsed = Environment.TickCount64;
+        if (_conn != null && _conn.State != System.Data.ConnectionState.Open) DropConnection();
         if (cancelled) output.AppendLine("Cancelado por el usuario.");
 
         PlanLoading.Visibility = Visibility.Collapsed;
@@ -1235,18 +1248,99 @@ public partial class QueryTab : UserControl
         return first.Length < sql.Length ? first + " ..." : first;
     }
 
-    private async Task EnsureOpenAsync(CancellationToken token)
-    {
-        if (_conn?.State == System.Data.ConnectionState.Open) return;
+    /// <summary>Tras este tiempo sin usarse, antes de ejecutar se comprueba que la conexión sigue viva. (Las pruebas lo bajan.)</summary>
+    public static int IdleCheckSeconds { get; set; } = 30;
+    /// <summary>Lo que se espera la respuesta a esa comprobación; pasado este tiempo, la conexión se da por caída.</summary>
+    private const int PingTimeoutSeconds = 5;
+    /// <summary>Texto que queda en Mensajes cuando hubo que reabrir la conexión.</summary>
+    private const string ReconnectedNotice =
+        "Aviso: la conexión se había cerrado (por inactividad o por un corte de red) y se volvió a abrir sola. " +
+        "Se perdió lo propio de la sesión anterior: variables, tablas temporales y transacciones sin confirmar.";
 
-        if (_conn != null)
-            await _conn.DisposeAsync();
+    /// <summary>Momento del último uso de la conexión (Environment.TickCount64).</summary>
+    private long _lastUsed;
+
+    /// <summary>
+    /// Deja la conexión abierta y utilizable. Una conexión que lleva un rato sin usarse puede haber muerto sin que
+    /// el controlador lo sepa (el servidor la cerró por inactividad, se cayó el túnel SSH, se cortó la red): antes
+    /// de ejecutar se comprueba y, si no responde, se abre otra, sin que haya que desconectar y volver a conectar.
+    /// Devuelve true si hubo que reabrir una conexión que ya existía.
+    /// </summary>
+    private async Task<bool> EnsureOpenAsync(CancellationToken token)
+    {
+        bool reopened = _conn != null;
+        if (_conn?.State == System.Data.ConnectionState.Open)
+        {
+            bool recent = Environment.TickCount64 - _lastUsed < IdleCheckSeconds * 1000;
+            if (recent || await IsAliveAsync(_conn))
+            {
+                _lastUsed = Environment.TickCount64;
+                return false;
+            }
+        }
+
+        DropConnection();
+        try
+        {
+            await OpenNewAsync(token);
+        }
+        catch (Exception) when (reopened && Profile.UseSsh && !token.IsCancellationRequested)
+        {
+            // El túnel SSH puede haber quedado a medio caer: se descarta y se prueba una vez con uno nuevo.
+            // Solo si antes había conexión (las credenciales ya funcionaron): un primer intento fallido no se
+            // repite, para no doblar los intentos con una contraseña incorrecta.
+            DropConnection();
+            SshTunnels.Close(Profile);
+            await OpenNewAsync(token);
+        }
+        _lastUsed = Environment.TickCount64;
+        return reopened;
+    }
+
+    private async Task OpenNewAsync(CancellationToken token)
+    {
         _conn = Profile.CreateConnection(CurrentDatabase);
         if (_conn is Microsoft.Data.SqlClient.SqlConnection sqlServer)
             sqlServer.InfoMessage += (_, e) => _serverMessages?.AppendLine(e.Message);
         if (_conn is AdoNetCore.AseClient.AseConnection sybase)
             sybase.InfoMessage += (_, e) => _serverMessages?.AppendLine((e.Message ?? "").TrimEnd('\r', '\n'));
         await Db.OpenAsync(_conn, token);
+    }
+
+    /// <summary>Suelta la conexión sin esperar a que se cierre: si está caída, cerrarla puede tardar.</summary>
+    private void DropConnection()
+    {
+        var conn = _conn;
+        _conn = null;
+        if (conn != null)
+            _ = Task.Run(async () => { try { await conn.DisposeAsync(); } catch { } });
+    }
+
+    /// <summary>¿Responde la conexión? Una consulta mínima con un límite de tiempo corto.</summary>
+    private async Task<bool> IsAliveAsync(DbConnection conn)
+    {
+        if (Profile.Kind == DbKind.Sqlite) return true;   // un archivo local no se cae por inactividad
+        var ping = Task.Run(async () =>
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT 1";
+            cmd.CommandTimeout = PingTimeoutSeconds;
+            await cmd.ExecuteScalarAsync();
+        });
+        if (await Task.WhenAny(ping, Task.Delay(TimeSpan.FromSeconds(PingTimeoutSeconds))) != ping)
+        {
+            _ = ping.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);   // terminará (o fallará) al soltar la conexión
+            return false;
+        }
+        try
+        {
+            await ping;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>Registro de la ejecución en curso, donde se anotan los mensajes del servidor (PRINT de SQL Server).</summary>

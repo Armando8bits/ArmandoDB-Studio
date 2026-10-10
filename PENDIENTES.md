@@ -43,6 +43,7 @@ Orden recomendado para la primera prueba: conexión marcada como **Producción**
 - [ ] Botones "Cancelar consulta" y "Cerrar conexión" del monitor de procesos (`KILL`).
 - [ ] Monitor con muchas conexiones a la vez.
 - [ ] Caída real del túnel SSH (se simuló cortando el cliente, no la red).
+- [ ] Reconexión automática de una pestaña tras quedar inactiva: probada en SQL Server cerrando la sesión desde el servidor. Falta confirmarla en el caso real, MySQL por túnel SSH tras horas sin uso.
 
 ### Buscar en la base de datos e historial de consultas
 

@@ -60,6 +60,75 @@ public class QueryExecutionTests
         }
     });
 
+    /// <summary>El valor de la primera celda del primer resultado de la pestaña.</summary>
+    private static object? FirstCell(QueryTab tab)
+    {
+        var grids = (List<System.Windows.Controls.DataGrid>)typeof(QueryTab)
+            .GetField("_grids", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(tab)!;
+        return ((List<object?[]>)grids[0].ItemsSource)[0][0];
+    }
+
+    [LocalDbFact]
+    public void Si_la_conexion_se_cayo_mientras_no_se_usaba_se_reabre_sola_al_ejecutar() => Ui.Run(async () =>
+    {
+        int previous = QueryTab.IdleCheckSeconds;
+        QueryTab.IdleCheckSeconds = 0;   // comprobar siempre, sin esperar al tiempo de inactividad
+        try
+        {
+            var tab = new QueryTab(LocalDb.Profile, "master", "Consulta1.sql");
+            // Una tabla temporal marca la sesión: solo existe en la conexión que la creó. (Además impide que el
+            // controlador de SQL Server recupere la sesión por su cuenta, que es lo que hace si no hay estado.)
+            tab.SetText(MarkSession);
+            await tab.ExecuteAsync();
+            Assert.Equal("Consulta ejecutada correctamente.", tab.StatusText);
+            int session = Convert.ToInt32(FirstCell(tab));
+
+            // El servidor cierra esa sesión por su cuenta, como haría por inactividad o al caerse el túnel.
+            await LocalDb.Query("master", $"KILL {session}");
+
+            // Ejecutar otra vez funciona a la primera, sin desconectar ni volver a conectar a mano: es otra sesión.
+            tab.SetText(ReadMark);
+            await tab.ExecuteAsync();
+            Assert.Equal("Consulta ejecutada correctamente.", tab.StatusText);
+            Assert.Null(FirstCell(tab));   // la marca no existe: es una conexión nueva
+
+            // Con la conexión sana no se reabre nada: lo que se crea en una ejecución sigue ahí en la siguiente.
+            tab.SetText(MarkSession);
+            await tab.ExecuteAsync();
+            tab.SetText(ReadMark);
+            await tab.ExecuteAsync();
+            Assert.NotNull(FirstCell(tab));
+            tab.Close();
+        }
+        finally
+        {
+            QueryTab.IdleCheckSeconds = previous;
+        }
+    });
+
+    [LocalDbFact]
+    public void Si_la_conexion_se_corta_al_ejecutar_la_siguiente_ejecucion_ya_funciona() => Ui.Run(async () =>
+    {
+        // Con la comprobación previa desactivada (uso reciente), el corte se descubre al ejecutar: esa ejecución
+        // falla, pero la conexión rota se suelta y la siguiente abre otra.
+        var tab = new QueryTab(LocalDb.Profile, "master", "Consulta1.sql");
+        tab.SetText(MarkSession);
+        await tab.ExecuteAsync();
+        await LocalDb.Query("master", $"KILL {Convert.ToInt32(FirstCell(tab))}");
+
+        tab.SetText(ReadMark);
+        await tab.ExecuteAsync();
+        Assert.Equal("Consulta finalizada con errores.", tab.StatusText);
+
+        await tab.ExecuteAsync();
+        Assert.Equal("Consulta ejecutada correctamente.", tab.StatusText);
+        Assert.Null(FirstCell(tab));
+        tab.Close();
+    });
+
+    private const string MarkSession = "CREATE TABLE #marca (n int);\nSELECT @@SPID AS sesion;";
+    private const string ReadMark = "SELECT OBJECT_ID('tempdb..#marca') AS marca;";
+
     [LocalDbFact]
     public void En_SQL_Server_al_llegar_al_tope_se_cancela_el_resto_y_la_conexion_sigue_sirviendo() => Ui.Run(async () =>
     {
