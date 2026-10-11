@@ -13,7 +13,7 @@ public enum ExplorerIcon
     // Resto de opciones de menú.
     NewQuery, Open, Save, SaveAs, SaveAll, History, Close, Exit, Undo, Redo, Find, Replace, Format, Complete, Snippets, Filter, Panel, Pin,
     Next, Previous, MoveGroup, Monitor, Font, Confirm, Theme, Keyboard, Log, About, Refresh, Backup, Restore, Import,
-    Copy, CopyHeaders, SelectAll, SortAscending, SortDescending, ClearSort,
+    Copy, CopyHeaders, Cut, Paste, SelectAll, SortAscending, SortDescending, ClearSort,
     // Panel de resultados: minimizado, maximizado y repartido con el editor.
     PaneMinimize, PaneMaximize, PaneRestore,
 }
@@ -396,6 +396,20 @@ public static class ExplorerIcons
                 Add("M2.5,1.5 H10.5 V11.5 H2.5 Z", BlueLight, SteelDark);
                 Add("M5.5,4.5 H13.5 V14.5 H5.5 Z", Brushes.White, SteelDark);
                 if (icon == ExplorerIcon.CopyHeaders) Add("M5.5,4.5 H13.5 V7.5 H5.5 Z", Accent, SteelDark);
+                break;
+
+            case ExplorerIcon.Cut:
+                // Tijeras: dos hojas cruzadas y dos ojos.
+                Add("M5,2 L10.2,10.2 M11,2 L5.8,10.2", null, SteelDark, 1.5);
+                Add("M2.4,12.2 A2,2 0 1 0 6.4,12.2 A2,2 0 1 0 2.4,12.2 Z", null, Accent, 1.5);
+                Add("M9.6,12.2 A2,2 0 1 0 13.6,12.2 A2,2 0 1 0 9.6,12.2 Z", null, Accent, 1.5);
+                break;
+
+            case ExplorerIcon.Paste:
+                // Portapapeles con su pinza y una hoja.
+                Add("M3,3 H13 V14.5 H3 Z", GoldLight, FolderDark);
+                Add("M6,1.5 H10 V4.5 H6 Z", GrayLight, SteelDark);
+                Add("M5.5,7 H12.5 V12.5 H5.5 Z", Brushes.White, SteelDark);
                 break;
 
             case ExplorerIcon.SelectAll:

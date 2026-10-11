@@ -26,6 +26,13 @@
                 <MenuItem x:Name="UndoMenuItem" Header="_Deshacer" InputGestureText="Ctrl+Z" Click="Undo_Click" IsEnabled="False"/>
                 <MenuItem x:Name="RedoMenuItem" Header="Re_hacer" InputGestureText="Ctrl+Y" Click="Redo_Click" IsEnabled="False"/>
                 <Separator/>
+                <!-- Órdenes estándar: actúan sobre lo que tenga el teclado (el editor, la cuadrícula de resultados, un
+                     cuadro de texto) y se activan o desactivan solas según se puedan aplicar ahí. -->
+                <MenuItem Header="Cor_tar" Command="ApplicationCommands.Cut" InputGestureText="Ctrl+X"/>
+                <MenuItem Header="_Copiar" Command="ApplicationCommands.Copy" InputGestureText="Ctrl+C"/>
+                <MenuItem Header="_Pegar" Command="ApplicationCommands.Paste" InputGestureText="Ctrl+V"/>
+                <MenuItem Header="_Seleccionar todo" Command="ApplicationCommands.SelectAll" InputGestureText="Ctrl+A"/>
+                <Separator/>
                 <MenuItem Header="_Buscar..." InputGestureText="Ctrl+F" Click="Find_Click"/>
                 <MenuItem Header="_Reemplazar..." InputGestureText="Ctrl+Mayús+H" Click="Replace_Click"/>
                 <Separator/>

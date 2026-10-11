@@ -46,6 +46,7 @@ public static class MenuIcons
         ("CREATE", ExplorerIcon.Procedure), ("SELECT", ExplorerIcon.Table), ("INSERT", ExplorerIcon.Import),
         ("UPDATE", ExplorerIcon.Replace), ("DELETE", ExplorerIcon.Close),
         ("Copiar con encabezados", ExplorerIcon.CopyHeaders), ("Copiar", ExplorerIcon.Copy),
+        ("Cortar", ExplorerIcon.Cut), ("Pegar", ExplorerIcon.Paste),
         ("Seleccionar todo", ExplorerIcon.SelectAll), ("Seleccionar la columna", ExplorerIcon.Column),
         ("Ordenar ascendente", ExplorerIcon.SortAscending), ("Ordenar descendente", ExplorerIcon.SortDescending),
         ("Quitar el orden", ExplorerIcon.ClearSort),

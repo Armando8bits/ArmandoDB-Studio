@@ -164,6 +164,9 @@ public partial class QueryTab : UserControl
             editor.TextArea.SelectionForeground = null;
             editor.TextArea.SelectionBorder = null;
         }
+        Editor.ContextMenu = ClipboardMenu(Editor, editable: true);
+        Messages.ContextMenu = ClipboardMenu(Messages, editable: false);
+        PlanView.ContextMenu = ClipboardMenu(PlanView, editable: false);
         ApplyFont();
         ApplyTheme();
         ApplyDialect();
@@ -1809,6 +1812,27 @@ public partial class QueryTab : UserControl
             owner.IsEnabled = true;
             progressDialog?.Finish();
         }
+    }
+
+    /// <summary>
+    /// Menú de clic derecho de un editor de texto: cortar, copiar, pegar y seleccionar todo (en los de solo
+    /// lectura, solo copiar y seleccionar todo). Son las órdenes estándar del propio editor, así que cada opción
+    /// se desactiva sola cuando no se puede aplicar (copiar sin nada seleccionado, pegar sin texto en el portapapeles).
+    /// </summary>
+    private static ContextMenu ClipboardMenu(TextEditor editor, bool editable)
+    {
+        var menu = new ContextMenu();
+        void Add(string header, RoutedUICommand command, string gesture) => menu.Items.Add(new MenuItem
+        {
+            Header = header, Command = command, CommandTarget = editor.TextArea, InputGestureText = gesture,
+        });
+        if (editable) Add("Cortar", ApplicationCommands.Cut, "Ctrl+X");
+        Add("Copiar", ApplicationCommands.Copy, "Ctrl+C");
+        if (editable) Add("Pegar", ApplicationCommands.Paste, "Ctrl+V");
+        menu.Items.Add(new Separator());
+        Add("Seleccionar todo", ApplicationCommands.SelectAll, "Ctrl+A");
+        MenuIcons.Apply(menu);
+        return menu;
     }
 
     private static MenuItem MenuItem(string header, Action action)
