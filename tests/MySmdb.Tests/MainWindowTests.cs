@@ -32,6 +32,51 @@ internal sealed class MainWindowHarness
     }
 }
 
+/// <summary>Menú de clic derecho del editor.</summary>
+public class EditorMenuTests
+{
+    [Fact]
+    public void Cortar_y_copiar_solo_se_ofrecen_con_texto_seleccionado() => Ui.Run(async () =>
+    {
+        var owner = Ui.HiddenOwner();
+        try
+        {
+            var tab = new QueryTab(ConnectionProfile.Offline, null, "Consulta1.sql");
+            owner.Content = tab;
+            tab.SetText("SELECT 1;\nSELECT 2;");
+            await Ui.Settle();
+            var menu = tab.SqlEditor.ContextMenu!;
+            var items = menu.Items.OfType<System.Windows.Controls.MenuItem>().ToDictionary(i => (string)i.Header);
+            Assert.Equal(new[] { "Cortar", "Copiar", "Pegar", "Seleccionar todo" }, items.Keys.ToArray());
+
+            async Task<(bool Cut, bool Copy, bool SelectAll)> Open()
+            {
+                menu.PlacementTarget = tab.SqlEditor;
+                menu.IsOpen = true;
+                await Ui.Settle();
+                var state = (items["Cortar"].IsEnabled, items["Copiar"].IsEnabled, items["Seleccionar todo"].IsEnabled);
+                menu.IsOpen = false;
+                await Ui.Settle();
+                return state;
+            }
+
+            // Sin selección: ni cortar ni copiar; seleccionar todo, sí.
+            Assert.Equal((false, false, true), await Open());
+
+            tab.SqlEditor.Select(0, 6);
+            Assert.Equal((true, true, true), await Open());
+
+            tab.SqlEditor.SelectionLength = 0;
+            Assert.Equal((false, false, true), await Open());
+            tab.Close();
+        }
+        finally
+        {
+            owner.Close();
+        }
+    });
+}
+
 public class MainWindowTests
 {
     [Fact]

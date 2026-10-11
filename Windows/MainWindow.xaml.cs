@@ -503,6 +503,18 @@ public partial class MainWindow : Window
         tab.FocusEditor();
     }
 
+    /// <summary>
+    /// Cortar y Copiar del menú Editar: en un editor de texto solo se ofrecen si hay algo seleccionado. (El editor
+    /// los da siempre por posibles, porque con el teclado y sin selección cortan o copian la línea entera.)
+    /// </summary>
+    private void EditMenu_SubmenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, sender)) return;   // el aviso de un submenú de dentro no cuenta
+        // Lo que tenía el teclado antes de abrir el menú: sobre eso actúan las órdenes.
+        bool available = FocusManager.GetFocusedElement(this) is not ICSharpCode.AvalonEdit.Editing.TextArea area || !area.Selection.IsEmpty;
+        CutMenuItem.IsEnabled = CopyMenuItem.IsEnabled = available;
+    }
+
     private void Undo_Click(object sender, RoutedEventArgs e) => Current?.SqlEditor.Undo();
     private void Redo_Click(object sender, RoutedEventArgs e) => Current?.SqlEditor.Redo();
     private void ToggleResultFilter_Click(object sender, RoutedEventArgs e) => Current?.ToggleResultFilter();

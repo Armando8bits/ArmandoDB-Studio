@@ -1822,15 +1822,25 @@ public partial class QueryTab : UserControl
     private static ContextMenu ClipboardMenu(TextEditor editor, bool editable)
     {
         var menu = new ContextMenu();
-        void Add(string header, RoutedUICommand command, string gesture) => menu.Items.Add(new MenuItem
+        var needSelection = new List<MenuItem>();
+        void Add(string header, RoutedUICommand command, string gesture, bool selectionOnly = false)
         {
-            Header = header, Command = command, CommandTarget = editor.TextArea, InputGestureText = gesture,
-        });
-        if (editable) Add("Cortar", ApplicationCommands.Cut, "Ctrl+X");
-        Add("Copiar", ApplicationCommands.Copy, "Ctrl+C");
+            var item = new MenuItem { Header = header, Command = command, CommandTarget = editor.TextArea, InputGestureText = gesture };
+            if (selectionOnly) needSelection.Add(item);
+            menu.Items.Add(item);
+        }
+        if (editable) Add("Cortar", ApplicationCommands.Cut, "Ctrl+X", selectionOnly: true);
+        Add("Copiar", ApplicationCommands.Copy, "Ctrl+C", selectionOnly: true);
         if (editable) Add("Pegar", ApplicationCommands.Paste, "Ctrl+V");
         menu.Items.Add(new Separator());
         Add("Seleccionar todo", ApplicationCommands.SelectAll, "Ctrl+A");
+        // El editor da Cortar y Copiar siempre por posibles (con el teclado y sin selección actúan sobre la línea
+        // entera); en el menú solo se ofrecen si hay texto seleccionado.
+        menu.Opened += (_, _) =>
+        {
+            bool selected = !editor.TextArea.Selection.IsEmpty;
+            foreach (var item in needSelection) item.IsEnabled = selected;
+        };
         MenuIcons.Apply(menu);
         return menu;
     }
